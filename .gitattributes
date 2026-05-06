@@ -1,0 +1,4 @@
+# Always use LF for shell scripts and Docker-related files to avoid CRLF issues on Linux containers
+*.sh        text eol=lf
+Dockerfile* text eol=lf
+Procfile    text eol=lf
