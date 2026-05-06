@@ -22,6 +22,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 ASSETS_DIR = ROOT_DIR / "assets"
 FONTS_DIR = ROOT_DIR / "fonts"
 STATIC_DIR = ROOT_DIR / "static"
+DIST_DIR = ROOT_DIR / "dist"
+DIST_ASSETS_DIR = DIST_DIR / "assets"
 
 OUTPUT_PDF_FILENAME = "FormPDFPreview.pdf"
 
@@ -70,7 +72,11 @@ class RedeemPaymentCodeRequest(BaseModel):
 
 
 def _index_html_response() -> HTMLResponse:
-    """Served with explicit text/html so clients (incl. Telegram Mini App) render, not show source."""
+    """Serve built React SPA when ``dist/index.html`` exists (Docker/Render); else dev ``index.html``."""
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.is_file():
+        raw = dist_index.read_text(encoding="utf-8")
+        return HTMLResponse(content=raw, media_type="text/html; charset=utf-8")
     path = ROOT_DIR / "index.html"
     raw = path.read_text(encoding="utf-8")
     return HTMLResponse(content=raw, media_type="text/html; charset=utf-8")
@@ -104,6 +110,9 @@ def index() -> HTMLResponse:
 def static_index() -> HTMLResponse:
     return _index_html_response()
 
+
+if DIST_ASSETS_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(DIST_ASSETS_DIR)), name="dist_assets")
 
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

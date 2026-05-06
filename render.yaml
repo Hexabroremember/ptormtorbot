@@ -1,18 +1,18 @@
+# Deploy without GitHub: build image locally, push to Docker Hub (or GHCR), then create a
+# Render "Existing Docker Image" service pointing at your image tag.
+#
+# Optional env in Dashboard:
+#   WEB_APP_URL = https://<your-service>.onrender.com   (for Telegram Mini App button)
+
 services:
   - type: web
     name: ptormtorbot-api
-    runtime: python
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.8"
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: WEB_APP_URL
         sync: false
-      - key: CORS_ORIGINS
-        value: "https://beautiful-taiyaki-9e0028.netlify.app"
-      - key: PAYMENT_ADMIN_TELEGRAM_IDS
-        value: "5319095718"
