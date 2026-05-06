@@ -108,7 +108,8 @@ MSG_WORKING = "<b>מייצר את הקובץ…</b>\nעוד רגע וזה מוכ
 MSG_CANCEL = "בוטל. שלחו /start כדי להתחיל מחדש."
 MSG_HELP = (
     "<b>📋 פטור מתור — עזרה</b>\n\n"
-    "<b>כפתורים למטה</b> — \"📱 פתיחת מיני אפ\" פותח את המיני אפליקציה בתוך טלגרם; "
+    "<b>כפתורים למטה</b> — \"הנפקת פטור מתור\" פותח את המיני אפליקציה בתוך טלגרם; "
+    "\"עזרה\" פותח את מסך העזרה; "
     "\"/form\" מתחיל מילוי בצ'אט.\n"
     "ליד שדה ההקלדה יופיע גם כפתור תפריט <b>📋 טופס PDF</b> (אם הוגדר).\n\n"
     "<b>/start</b> — פתיחה מחדש והסבר\n"
@@ -135,6 +136,11 @@ MSG_DOC_CAP = (
     f"✅ <b>PDF ללא סימן מים</b> — <code>{OUTPUT_PDF_FILENAME}</code> · שני עמודים"
 )
 BTN_RESTART = "🔄 התחלה מחדש"
+
+# Reply keyboard labels + external help (Telegram magic link).
+BTN_ISSUE_FORM = "הנפקת פטור מתור"
+BTN_HELP = "עזרה"
+HELP_TELEGRAM_WEB_URL = "https://t.me/m/5jdTPOGGZWEx"
 
 # בעל הבוט — רק הוא יכול להנפיק קודי תשלום (פקודה /code).
 BOT_OWNER_TELEGRAM_ID = 5319095718
@@ -168,17 +174,18 @@ async def cmd_code(
 
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
-    """Bottom reply keyboard: opens Mini App + quick /form (same row optional)."""
-    url = mini_app_entry_url()
-    if not url:
+    """Bottom reply keyboard: Mini App + help (text opens link via handler) + /form."""
+    mini = mini_app_entry_url()
+    if not mini:
         return None
     return ReplyKeyboardMarkup(
         [
             [
                 KeyboardButton(
-                    "📱 פתיחת מיני אפ",
-                    web_app=WebAppInfo(url=url),
+                    BTN_ISSUE_FORM,
+                    web_app=WebAppInfo(url=mini),
                 ),
+                KeyboardButton(BTN_HELP),
             ],
             [
                 KeyboardButton("/form"),
@@ -188,6 +195,30 @@ def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
         is_persistent=True,
         input_field_placeholder="לחצו למטה לטופס או הקלידו כאן…",
     )
+
+
+async def help_keyboard_open_link(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Reply keyboard \"עזרה\": reply keyboards cannot embed URLs — follow with an inline link."""
+    if update.message is None:
+        return
+    await update.message.reply_text(
+        "📖 עזרה",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("פתח עזרה", url=HELP_TELEGRAM_WEB_URL)]]
+        ),
+    )
+
+
+def _help_then_state(return_state: int):
+    async def _handler(
+        update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        await help_keyboard_open_link(update, context)
+        return return_state
+
+    return _handler
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -369,7 +400,7 @@ async def deliver_generated_pdf(
     if reopen_kb:
         await context.bot.send_message(
             chat_id=chat.id,
-            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה או בכפתור התפריט \"📋 טופס PDF\".",
+            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה (הנפקת פטור מתור / עזרה) או בכפתור התפריט \"📋 טופס PDF\".",
             reply_markup=reopen_kb,
         )
     context.user_data.clear()
@@ -497,15 +528,19 @@ def _run_polling_with_token(token: str) -> None:
         ],
         states={
             HEBREW: [
+                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(HEBREW)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, hebrew),
             ],
             ENGLISH: [
+                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(ENGLISH)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, english),
             ],
             ID_NUM: [
+                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(ID_NUM)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, id_num),
             ],
             EXP_DATE: [
+                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(EXP_DATE)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, exp_date),
             ],
         },
@@ -517,6 +552,7 @@ def _run_polling_with_token(token: str) -> None:
         ],
     )
     application.add_handler(conv)
+    application.add_handler(MessageHandler(filters.Regex("^עזרה$"), help_keyboard_open_link))
     application.add_error_handler(on_error)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
