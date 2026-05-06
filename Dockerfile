@@ -28,9 +28,7 @@ COPY fonts ./fonts
 COPY static ./static
 COPY --from=frontend /build/dist ./dist
 
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+# PORT is set by Railway/Render/etc.; read in Python (avoids shell / $PORT literal issues).
+CMD ["python", "-m", "app"]
