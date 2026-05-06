@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pymupdf
+python-multipart
+pillow
+qrcode>=7.4
+python-telegram-bot>=21.0
+python-dotenv>=1.0
