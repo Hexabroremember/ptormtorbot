@@ -130,7 +130,7 @@ function validateStep1(formData, lang) {
 
 const content = {
   he: {
-    title: "הנפקת תעודה דיגיטלית",
+    title: "הנפקת תעודה דיגיטלית (פטור מתור)",
     next: "המשך",
     back: "חזרה",
     payment: "מעבר לתשלום מאובטח",
