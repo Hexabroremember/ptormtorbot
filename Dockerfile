@@ -28,6 +28,9 @@ COPY fonts ./fonts
 COPY static ./static
 COPY --from=frontend /build/dist ./dist
 
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 ENV PYTHONUNBUFFERED=1
 
-CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
