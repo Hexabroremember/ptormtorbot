@@ -17,6 +17,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InputFile,
     KeyboardButton,
+    MenuButtonWebApp,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     Update,
@@ -90,7 +91,10 @@ MSG_WORKING = "<b>מייצר את הקובץ…</b>\nעוד רגע וזה מוכ
 MSG_CANCEL = "בוטל. שלחו /start כדי להתחיל מחדש."
 MSG_HELP = (
     "<b>📋 פטור מתור — עזרה</b>\n\n"
-    "<b>/start</b> — פותחים את הטופס (אפליקציית ווב בתוך טלגרם, אם הוגדר קישור)\n"
+    "<b>כפתורים למטה</b> — \"📱 פתיחת מיני אפ\" פותח את המיני אפליקציה בתוך טלגרם; "
+    "\"/form\" מתחיל מילוי בצ'אט.\n"
+    "ליד שדה ההקלדה יופיע גם כפתור תפריט <b>📋 טופס PDF</b> (אם הוגדר).\n\n"
+    "<b>/start</b> — פתיחה מחדש והסבר\n"
     "<b>/form</b> — ממלאים את אותם שדות בשיחה, שלב אחר שלב\n"
     "<b>/cancel</b> — עצירה באמצע מילוי בצ'אט\n\n"
     "<b>/code</b> — בעל הבוט בלבד: הנפקת קוד אישור תשלום חד פעמי ללקוח.\n\n"
@@ -102,10 +106,11 @@ MSG_HELP = (
 )
 MSG_WEB_APP_START = (
     "<b>📋 פטור מתור</b>\n"
-    "לטופס המלא עם תצוגה חיה — לחצו על הכפתור למטה (נפתח בתוך טלגרם).\n\n"
-    "שם מלא בעברית ובאנגלית, מספר זהות, תאריך תפוגה וסימן מים — הכול באותו מסך, "
-    "ואז תצוגה מקדימה והורדת PDF.\n\n"
-    "<b>רוצים למלא בשיחה?</b> שלחו <code>/form</code>"
+    "לטופס המלא עם תצוגה חיה — לחצו על <b>הכפתורים למטה</b> או על כפתור התפריט "
+    "ליד שדה ההקלדה (📋 טופס PDF). המיני אפ נפתח בתוך טלגרם.\n\n"
+    "שם מלא בעברית ובאנגלית, מספר זהות, תאריך תפוגה וסימן מים — בקשה אחת, "
+    "תצוגה מקדימה והורדת PDF.\n\n"
+    "<b>למלא בשיחה צעד־אחר־צעד:</b> לחצו על <code>/form</code> בשורת הכפתורים או שלחו את הפקודה כאן."
 )
 MSG_ERR_VALID = "נתונים לא תקינים — בדקו את השדות ונסו שוב."
 MSG_ERR_GEN = "לא הצלחנו ליצור את הקובץ. נסו שוב או פנו למנהל המערכת."
@@ -146,6 +151,7 @@ async def cmd_code(
 
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
+    """Bottom reply keyboard: opens Mini App + quick /form (same row optional)."""
     url = mini_app_entry_url()
     if not url:
         return None
@@ -153,12 +159,17 @@ def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
         [
             [
                 KeyboardButton(
-                    "📋 פתיחת טופס",
+                    "📱 פתיחת מיני אפ",
                     web_app=WebAppInfo(url=url),
-                )
-            ]
+                ),
+            ],
+            [
+                KeyboardButton("/form"),
+            ],
         ],
         resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="לחצו למטה לטופס או הקלידו כאן…",
     )
 
 
@@ -181,7 +192,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Multi-step chat form — /form, restart button, or /start when no Web App URL."""
     context.user_data.clear()
-    chat_rm = ReplyKeyboardRemove()
+    bottom_kb = web_app_reply_keyboard()
+    chat_rm = bottom_kb or ReplyKeyboardRemove()
     if update.callback_query is not None:
         q = update.callback_query
         await q.answer()
@@ -243,7 +255,7 @@ async def exp_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         MSG_WORKING,
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=web_app_reply_keyboard() or ReplyKeyboardRemove(),
     )
     return await deliver_generated_pdf(update, context)
 
@@ -336,20 +348,36 @@ async def deliver_generated_pdf(
         parse_mode="HTML",
         reply_markup=again_kb,
     )
+    reopen_kb = web_app_reply_keyboard()
+    if reopen_kb:
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה או בכפתור התפריט \"📋 טופס PDF\".",
+            reply_markup=reopen_kb,
+        )
     context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message:
-        await update.message.reply_text(MSG_CANCEL)
+        kb = web_app_reply_keyboard()
+        await update.message.reply_text(
+            MSG_CANCEL,
+            reply_markup=kb if kb else ReplyKeyboardRemove(),
+        )
     context.user_data.clear()
     return ConversationHandler.END
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(MSG_HELP, parse_mode="HTML")
+        kb = web_app_reply_keyboard()
+        await update.message.reply_text(
+            MSG_HELP,
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
 
 
 def pdf_bytes_to_telegram_jpeg(
@@ -429,6 +457,14 @@ def _run_polling_with_token(token: str) -> None:
                 BotCommand("cancel", "ביטול מילוי בצ'אט"),
             ]
         )
+        menu_url = mini_app_entry_url()
+        if menu_url:
+            try:
+                await application.bot.set_chat_menu_button(
+                    menu_button=MenuButtonWebApp(text="📋 טופס PDF", url=menu_url),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not set Web App menu button: %s", exc)
 
     application = Application.builder().token(token).post_init(post_init).build()
     application.add_handler(CommandHandler("code", cmd_code))
@@ -456,6 +492,7 @@ def _run_polling_with_token(token: str) -> None:
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", cmd_start),
+            CommandHandler("form", begin_chat_flow),
             CallbackQueryHandler(begin_chat_flow, pattern=r"^restart$"),
         ],
     )
