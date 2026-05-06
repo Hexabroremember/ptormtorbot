@@ -105,7 +105,8 @@ def static_index() -> HTMLResponse:
     return _index_html_response()
 
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.post("/redeem-payment-code")
