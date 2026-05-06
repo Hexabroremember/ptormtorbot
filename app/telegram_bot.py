@@ -108,7 +108,7 @@ MSG_WORKING = "<b>מייצר את הקובץ…</b>\nעוד רגע וזה מוכ
 MSG_CANCEL = "בוטל. שלחו /start כדי להתחיל מחדש."
 MSG_HELP = (
     "<b>📋 פטור מתור — עזרה</b>\n\n"
-    "<b>כפתורים למטה</b> — \"הנפקת פטור מתור\" פותח את המיני אפליקציה בתוך טלגרם; "
+    "<b>כפתורים למטה</b> — \"📋 הנפקת פטור מתור\" פותח את המיני אפליקציה בתוך טלגרם; "
     "\"עזרה\" פותח את מסך העזרה; "
     "\"/form\" מתחיל מילוי בצ'אט.\n"
     "ליד שדה ההקלדה יופיע גם כפתור תפריט <b>📋 טופס PDF</b> (אם הוגדר).\n\n"
@@ -138,7 +138,7 @@ MSG_DOC_CAP = (
 BTN_RESTART = "🔄 התחלה מחדש"
 
 # Reply keyboard labels + external help (Telegram magic link).
-BTN_ISSUE_FORM = "הנפקת פטור מתור"
+BTN_ISSUE_FORM = "📋 הנפקת פטור מתור"
 BTN_HELP = "עזרה"
 HELP_TELEGRAM_WEB_URL = "https://t.me/m/5jdTPOGGZWEx"
 
@@ -185,9 +185,9 @@ def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
                     BTN_ISSUE_FORM,
                     web_app=WebAppInfo(url=mini),
                 ),
-                KeyboardButton(BTN_HELP),
             ],
             [
+                KeyboardButton(BTN_HELP),
                 KeyboardButton("/form"),
             ],
         ],
@@ -400,7 +400,7 @@ async def deliver_generated_pdf(
     if reopen_kb:
         await context.bot.send_message(
             chat_id=chat.id,
-            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה (הנפקת פטור מתור / עזרה) או בכפתור התפריט \"📋 טופס PDF\".",
+            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה (📋 הנפקת פטור מתור / עזרה) או בכפתור התפריט \"📋 טופס PDF\".",
             reply_markup=reopen_kb,
         )
     context.user_data.clear()

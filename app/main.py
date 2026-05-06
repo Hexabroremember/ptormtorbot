@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from app.payment_codes_store import redeem_code
+from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -110,6 +111,7 @@ app.add_middleware(
     allow_origins=_cors_allow_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Pdf-Download-Path"],
 )
 
 # Register before /static mount so /static/index.html is HTML, not a mis-typed static file.
@@ -158,10 +160,28 @@ def generate_pdf(payload: GeneratePdfRequest) -> Response:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not generate PDF: {exc}") from exc
 
+    dl_token = register_pdf_bytes(pdf_bytes)
     headers = {
         "Content-Disposition": f'inline; filename="{OUTPUT_PDF_FILENAME}"',
+        # Mini App / Telegram WebView often blocks blob: downloads — clients can open this HTTPS path instead.
+        "X-Pdf-Download-Path": f"/pdf-download/{dl_token}",
     }
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
+@app.get("/pdf-download/{token}")
+def download_pdf_by_token(token: str) -> Response:
+    """HTTPS download URL for the same bytes as ``POST /generate-pdf`` (Telegram-friendly)."""
+    data = get_pdf_bytes(token)
+    if data is None:
+        raise HTTPException(status_code=404, detail="download_expired_or_invalid")
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{OUTPUT_PDF_FILENAME}"',
+        },
+    )
 
 
 def replace_fields(

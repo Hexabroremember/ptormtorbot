@@ -29,6 +29,20 @@ function formatDateDdMmYyyy(d) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+/** API origin when SPA is on a different host than FastAPI (needed for HTTPS PDF download in Telegram). */
+function apiOriginFromEnv() {
+  return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+}
+
+/** Join ``X-Pdf-Download-Path`` with origin; falls back to blob URL when header missing (non-Telegram browsers). */
+function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl) {
+  const p = (pathFromHeader || "").trim();
+  if (!p) return blobFallbackUrl;
+  const origin = apiOriginFromEnv() || (typeof window !== "undefined" ? window.location.origin : "");
+  const path = p.startsWith("/") ? p : `/${p}`;
+  return `${origin}${path}`;
+}
+
 /** תאריך התפוגה בטופס לפי תקופה נבחרת (מהיום). לצמיתות → המחרוזת «לצמיתות». */
 function computeExpirationForPdf(expiryOptionId) {
   if (!expiryOptionId) return "";
@@ -176,6 +190,7 @@ const App = () => {
   const [finalPdfDownloading, setFinalPdfDownloading] = useState(false);
 
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
+  const [pdfDownloadPath, setPdfDownloadPath] = useState(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [pdfError, setPdfError] = useState(null);
 
@@ -230,6 +245,7 @@ const App = () => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
       });
+      setPdfDownloadPath(null);
       setPdfError(null);
       setPdfGenerating(false);
     }
@@ -279,12 +295,14 @@ const App = () => {
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
+        const dlHeader = res.headers.get("X-Pdf-Download-Path");
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         if (cancelled) {
           URL.revokeObjectURL(url);
           return;
         }
+        setPdfDownloadPath(dlHeader);
         setPdfPreviewUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return url;
@@ -424,15 +442,22 @@ const App = () => {
         }),
       });
       if (!res.ok) throw new Error((await parseJsonDetail(res)) || `HTTP ${res.status}`);
+      const dlHeader = res.headers.get("X-Pdf-Download-Path");
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "FormPDFPreview.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const blobUrl = URL.createObjectURL(blob);
+      const href = resolvePdfDownloadHref(dlHeader, blobUrl);
+      if (href && !href.startsWith("blob:")) {
+        window.open(href, "_blank", "noopener,noreferrer");
+        URL.revokeObjectURL(blobUrl);
+      } else {
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = "FormPDFPreview.pdf";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+      }
     } catch (e) {
       setPaymentCodeError(e.message || String(e));
     } finally {
@@ -570,8 +595,10 @@ const App = () => {
               <div className="p-4 bg-emerald-50 border-r-4 border-emerald-500 rounded-lg flex gap-3 text-emerald-900 text-sm shadow-sm">
                 <CheckCircle2 size={20} className="shrink-0 text-emerald-600 mt-0.5" />
                 <div>
-                  <p>הטופס הופק בהצלחה! אנא עיין בדוגמה לפני מעבר לתשלום.</p>
-                  <p className="text-xs text-emerald-800/90 mt-1">תצוגה בלבד — הורדת הקובץ אינה זמינה בשלב זה.</p>
+                  <p>הטופס הופק בהצלחה! אנא עיינו בדוגמה לפני מעבר לתשלום.</p>
+                  <p className="text-xs text-emerald-800/90 mt-1">
+                    במובייל ובטלגרם — השתמשו בכפתור ההורדה למטה (קישור מאובטח לשרת).
+                  </p>
                 </div>
               </div>
 
@@ -584,30 +611,35 @@ const App = () => {
                 </div>
               )}
 
-              <div className="relative w-full max-w-md mx-auto rounded-xl border border-slate-200 bg-slate-50 shadow-inner overflow-hidden min-h-[520px]">
-                {pdfPreviewUrl ? (
-                  <div className="flex min-h-[520px] flex-col bg-white p-2">
-                    <PdfPagePreview
-                      pdfBlobUrl={pdfPreviewUrl}
-                      ariaLabel={language === "ar" ? "معاينة PDF" : "תצוגת PDF"}
-                      labels={{ loading: t.pdfRendering }}
-                    />
-                    <div className="mt-3 shrink-0 border-t border-slate-200 bg-slate-50 p-3">
-                      <a
-                        href={pdfPreviewUrl}
-                        download="FormPDFPreview-sample.pdf"
-                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm active:scale-[0.99]"
-                      >
-                        <Download className="h-4 w-4 shrink-0" aria-hidden />
-                        {t.pdfDownloadSample}
-                      </a>
-                      <p className="mt-2 text-center text-xs leading-snug text-slate-500">
-                        {t.pdfMobileHint}
-                      </p>
+              {pdfPreviewUrl ? (
+                <>
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-4 shadow-sm">
+                    <a
+                      href={resolvePdfDownloadHref(pdfDownloadPath, pdfPreviewUrl)}
+                      download="FormPDFPreview-sample.pdf"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-md active:scale-[0.99] min-h-[52px]"
+                    >
+                      <Download className="h-5 w-5 shrink-0" aria-hidden />
+                      {t.pdfDownloadSample}
+                    </a>
+                    <p className="mt-3 text-center text-xs leading-snug text-slate-600">
+                      {t.pdfMobileHint}
+                    </p>
+                  </div>
+
+                  <div className="relative w-full max-w-md mx-auto rounded-xl border border-slate-200 bg-slate-50 shadow-inner overflow-hidden min-h-[520px]">
+                    <div className="flex min-h-[520px] flex-col bg-white p-2">
+                      <PdfPagePreview
+                        pdfBlobUrl={pdfPreviewUrl}
+                        ariaLabel={language === "ar" ? "معاينة PDF" : "תצוגת PDF"}
+                        labels={{ loading: t.pdfRendering }}
+                      />
                     </div>
                   </div>
-                ) : null}
-              </div>
+                </>
+              ) : null}
             </div>
           </div>
         );

@@ -1,8 +1,12 @@
-# Deploy without GitHub: build image locally, push to Docker Hub (or GHCR), then create a
-# Render "Existing Docker Image" service pointing at your image tag.
+# Render Blueprint – connect GitHub repo, then: Dashboard → New → Blueprint.
+# https://render.com/docs/blueprint-spec
 #
-# Optional env in Dashboard:
-#   WEB_APP_URL = https://<your-service>.onrender.com   (for Telegram Mini App button)
+# Environment (set in UI when sync: false, or use values below):
+#   TELEGRAM_BOT_TOKEN — @BotFather token (for app.telegram_bot; optional if API-only)
+#   WEB_APP_URL        — public URL of this web service, no trailing slash
+#                        e.g. https://ptormtorbot-api.onrender.com  (for Mini App + /start)
+#   CORS_ORIGINS       — optional; comma-separated extra origins (e.g. https://my.netlify.app)
+#                        If unset, app allows * (see app/main.py)
 
 services:
   - type: web
@@ -15,4 +19,6 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: WEB_APP_URL
+        sync: false
+      - key: CORS_ORIGINS
         sync: false
