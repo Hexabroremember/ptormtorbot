@@ -156,7 +156,6 @@ const content = {
 const App = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [language, setLanguage] = useState('he');
-  const [isLoading, setIsLoading] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [cryptoSelected, setCryptoSelected] = useState(false);
 
@@ -183,30 +182,27 @@ const App = () => {
 
   const TELEGRAM_LINK = "https://t.me/m/h_K7ZBosMzdh";
 
-  // Handle loading effect for Step 2
+  /** Full-screen step 2 animation until the watermarked PDF is loaded or the request fails. */
+  const step2AwaitingPdf = currentStep === 2 && !pdfPreviewUrl && !pdfError;
+
   useEffect(() => {
     if (currentStep === 2) {
-      setIsLoading(true);
       setLoadingProgress(0);
-      
-      const duration = 5000; // 5 seconds
-      const interval = 50;
-      const stepSize = 100 / (duration / interval);
-      
-      const timer = setInterval(() => {
-        setLoadingProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(timer);
-            setTimeout(() => setIsLoading(false), 500);
-            return 100;
-          }
-          return prev + stepSize;
-        });
-      }, interval);
-
-      return () => clearInterval(timer);
     }
   }, [currentStep]);
+
+  useEffect(() => {
+    if (!step2AwaitingPdf) {
+      if (pdfPreviewUrl || pdfError) {
+        setLoadingProgress(100);
+      }
+      return undefined;
+    }
+    const id = setInterval(() => {
+      setLoadingProgress((p) => (p >= 92 ? p : p + 0.9));
+    }, 70);
+    return () => clearInterval(id);
+  }, [step2AwaitingPdf, pdfPreviewUrl, pdfError]);
 
   const buildPdfApiUrl = () => {
     const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -230,7 +226,7 @@ const App = () => {
   }, [currentStep]);
 
   useEffect(() => {
-    if (currentStep !== 2 || isLoading) return undefined;
+    if (currentStep !== 2) return undefined;
 
     let cancelled = false;
 
@@ -295,7 +291,6 @@ const App = () => {
     };
   }, [
     currentStep,
-    isLoading,
     formData.fullName,
     formData.fullNameEn,
     formData.idNumber,
@@ -535,7 +530,7 @@ const App = () => {
           </div>
         );
       case 2:
-        if (isLoading) {
+        if (step2AwaitingPdf) {
           return (
             <div className="flex flex-col items-center justify-center py-12 space-y-6 animate-in fade-in duration-500">
               <div className="relative w-24 h-24">
@@ -580,12 +575,6 @@ const App = () => {
               )}
 
               <div className="relative w-full max-w-md mx-auto rounded-xl border border-slate-200 bg-slate-50 shadow-inner overflow-hidden min-h-[520px]">
-                {(pdfGenerating || (!pdfPreviewUrl && !pdfError)) && (
-                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/80 backdrop-blur-[1px]">
-                    <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-                    <span className="text-sm font-semibold text-slate-600">טוען תצוגת PDF עם סימן מים…</span>
-                  </div>
-                )}
                 {pdfPreviewUrl ? (
                   <iframe
                     title="PDF preview"
@@ -862,9 +851,9 @@ const App = () => {
             <button 
               type="button"
               onClick={handleBack}
-              disabled={currentStep === 1 || isLoading}
+              disabled={currentStep === 1 || step2AwaitingPdf}
               className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all text-sm ${
-                currentStep === 1 || isLoading
+                currentStep === 1 || step2AwaitingPdf
                 ? 'opacity-0 cursor-default pointer-events-none'
                 : 'text-slate-500 hover:bg-slate-200 active:scale-95'
               }`}
@@ -877,9 +866,9 @@ const App = () => {
               <button 
                 type="button"
                 onClick={handleNext}
-                disabled={isLoading}
+                disabled={step2AwaitingPdf}
                 className={`bg-blue-600 text-white px-8 py-2 rounded-xl font-bold hover:bg-blue-700 transition-all flex items-center gap-2 shadow-lg shadow-blue-100 active:scale-95 ${
-                  isLoading ? 'opacity-50 cursor-wait' : ''
+                  step2AwaitingPdf ? 'opacity-50 cursor-wait' : ''
                 }`}
               >
                 {currentStep === 2 ? t.payment : t.next}

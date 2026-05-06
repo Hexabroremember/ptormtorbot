@@ -467,16 +467,12 @@ def _run_polling_with_token(token: str) -> None:
     )
 
 
-def run_bot_daemon() -> None:
-    """Run long-polling in a background thread (same container as the web app)."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not token:
-        logger.info("Telegram bot skipped: TELEGRAM_BOT_TOKEN is not set.")
-        return
+def run_bot_process_entry(token: str) -> None:
+    """Multiprocessing entry: polling runs on the child process main thread (asyncio-safe)."""
     try:
         _run_polling_with_token(token)
     except Exception:  # noqa: BLE001
-        logger.exception("Telegram bot stopped with an error")
+        logger.exception("Telegram bot subprocess exited with an error")
 
 
 def main() -> None:
