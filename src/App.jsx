@@ -18,8 +18,9 @@ import {
   CircleDollarSign,
   Ticket,
   Download,
-  ExternalLink,
 } from 'lucide-react';
+
+import { PdfPagePreview } from "./PdfPagePreview.jsx";
 
 function formatDateDdMmYyyy(d) {
   const dd = String(d.getDate()).padStart(2, "0");
@@ -104,9 +105,10 @@ const content = {
     paymentCodeUsed: "הקוד כבר נוצל. צריך קוד חדש מהמנהל.",
     paymentDownloadFinal: "הורד PDF סופי (ללא סימן מים)",
     paymentDownloading: "מוריד…",
-    pdfOpenInNewTab: "פתח תצוגת PDF",
-    pdfPreviewFallback: "הדפדפן אינו מציג כאן את ה־PDF. לחצו לפתיחה בחלון או ביישומון.",
-    pdfMobileHint: "במובייל: אם התצוגה ריקה, השתמשו בכפתור \"פתח תצוגת PDF\".",
+    pdfRendering: "טוען תצוגה מקדימה…",
+    pdfDownloadSample: "הורד דוגמת PDF",
+    pdfMobileHint:
+      "הדוגמה מוצגת ישירות בדף — מתאים למובייל ובתוך טלגרם. אפשר גם להוריד את הקובץ למטה.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -154,9 +156,10 @@ const content = {
     paymentCodeUsed: "تم استخدام هذا الرمز مسبقًا. اطلب رمزًا جديدًا.",
     paymentDownloadFinal: "تنزيل PDF النهائي (بدون علامة مائية)",
     paymentDownloading: "جاري التنزيل…",
-    pdfOpenInNewTab: "فتح معاينة PDF",
-    pdfPreviewFallback: "المتصفح لا يعرض ملف PDF هنا. افتح في نافذة جديدة.",
-    pdfMobileHint: "على الهاتف: إذا كانت المعاينة فارغة، استخدم الزر أعلاه.",
+    pdfRendering: "جاري تحميل المعاينة…",
+    pdfDownloadSample: "تنزيل عيّنة PDF",
+    pdfMobileHint:
+      "تُعرض المعاينة داخل الصفحة — مناسب للهاتف وتيليجرام. يمكنك أيضًا تنزيل الملف أدناه.",
   },
 };
 
@@ -583,37 +586,21 @@ const App = () => {
 
               <div className="relative w-full max-w-md mx-auto rounded-xl border border-slate-200 bg-slate-50 shadow-inner overflow-hidden min-h-[520px]">
                 {pdfPreviewUrl ? (
-                  <div className="flex min-h-[520px] flex-col bg-white">
-                    <object
-                      data={pdfPreviewUrl}
-                      type="application/pdf"
-                      className="min-h-[min(70vh,480px)] w-full flex-1 bg-white"
-                      aria-label={language === "ar" ? "معاينة PDF" : "תצוגת PDF"}
-                    >
-                      <div className="flex min-h-[280px] flex-col items-center justify-center gap-4 px-4 py-10 text-center">
-                        <p className="text-sm text-slate-600">{t.pdfPreviewFallback}</p>
-                        <a
-                          href={pdfPreviewUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-md"
-                        >
-                          <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
-                          {t.pdfOpenInNewTab}
-                        </a>
-                      </div>
-                    </object>
-                    <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-3">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          window.open(pdfPreviewUrl, "_blank", "noopener,noreferrer")
-                        }
+                  <div className="flex min-h-[520px] flex-col bg-white p-2">
+                    <PdfPagePreview
+                      pdfBlobUrl={pdfPreviewUrl}
+                      ariaLabel={language === "ar" ? "معاينة PDF" : "תצוגת PDF"}
+                      labels={{ loading: t.pdfRendering }}
+                    />
+                    <div className="mt-3 shrink-0 border-t border-slate-200 bg-slate-50 p-3">
+                      <a
+                        href={pdfPreviewUrl}
+                        download="FormPDFPreview-sample.pdf"
                         className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-bold text-white shadow-sm active:scale-[0.99]"
                       >
-                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
-                        {t.pdfOpenInNewTab}
-                      </button>
+                        <Download className="h-4 w-4 shrink-0" aria-hidden />
+                        {t.pdfDownloadSample}
+                      </a>
                       <p className="mt-2 text-center text-xs leading-snug text-slate-500">
                         {t.pdfMobileHint}
                       </p>
