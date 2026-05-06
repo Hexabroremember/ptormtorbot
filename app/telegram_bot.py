@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -43,13 +44,25 @@ from app.main import (
 
 load_dotenv(ROOT_DIR / ".env")
 
-# Public HTTPS origin of the FastAPI app (no path), e.g. https://your-service.onrender.com
-WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
+
+def normalize_https_origin(raw: str) -> str:
+    """
+    Telegram Web App URLs must be absolute HTTPS. Bare hosts (common in Railway env UI)
+    need ``https://`` or the API rejects them (\"only https links are allowed\").
+    """
+    s = raw.strip()
+    if not s:
+        return ""
+    if re.match(r"^[a-z][a-z0-9+.-]*://", s, re.IGNORECASE):
+        if s.lower().startswith("http://"):
+            s = "https://" + s[7:]
+        return s.rstrip("/")
+    return ("https://" + s.lstrip("/")).rstrip("/")
 
 
 def mini_app_entry_url() -> str:
     """URL Telegram opens for the Mini App — ``static/index.html`` on the same host."""
-    base = WEB_APP_URL.rstrip("/")
+    base = normalize_https_origin(os.environ.get("WEB_APP_URL", ""))
     if not base:
         return ""
     low = base.lower()
@@ -60,6 +73,10 @@ def mini_app_entry_url() -> str:
     if low.endswith("/static"):
         return f"{base}/index.html"
     return f"{base}/static/index.html"
+
+
+# Same raw value as env (for backward compatibility); prefer ``mini_app_entry_url()`` for HTTPS-normalized URL.
+WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -461,7 +478,10 @@ def _run_polling_with_token(token: str) -> None:
         if menu_url:
             try:
                 await application.bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(text="📋 טופס PDF", url=menu_url),
+                    menu_button=MenuButtonWebApp(
+                        text="📋 טופס PDF",
+                        web_app=WebAppInfo(url=menu_url),
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not set Web App menu button: %s", exc)
