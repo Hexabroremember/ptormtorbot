@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { 
   User, 
   CreditCard, 
@@ -20,7 +20,7 @@ import {
   Download,
 } from 'lucide-react';
 
-import { PdfPagePreview } from "./PdfPagePreview.jsx";
+import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 function formatDateDdMmYyyy(d) {
   const dd = String(d.getDate()).padStart(2, "0");
@@ -41,6 +41,47 @@ function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl) {
   const origin = apiOriginFromEnv() || (typeof window !== "undefined" ? window.location.origin : "");
   const path = p.startsWith("/") ? p : `/${p}`;
   return `${origin}${path}`;
+}
+
+/** Rasterize page 1 of a watermarked PDF to a JPEG object URL for preview (no embedded PDF viewer). */
+async function renderPdfBlobToPreviewImageUrl(pdfBlob) {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+  const blobUrl = URL.createObjectURL(pdfBlob);
+  try {
+    const task = pdfjs.getDocument({ url: blobUrl, withCredentials: false });
+    const pdf = await task.promise;
+    const page = await pdf.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const maxCssWidth = 560;
+    const scale = Math.min(maxCssWidth / baseViewport.width, 2.5);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    const coarse =
+      typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)")?.matches);
+    const dpr = coarse ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+    const bw = Math.max(1, Math.floor(viewport.width * dpr));
+    const bh = Math.max(1, Math.floor(viewport.height * dpr));
+    canvas.width = bw;
+    canvas.height = bh;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("Canvas unsupported");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, bw, bh);
+    ctx.scale(dpr, dpr);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    await pdf.destroy?.().catch(() => {});
+    const imageBlob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("Preview image failed"))),
+        "image/jpeg",
+        0.9
+      );
+    });
+    return URL.createObjectURL(imageBlob);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 /** תאריך התפוגה בטופס לפי תקופה נבחרת (מהיום). לצמיתות → המחרוזת «לצמיתות». */
@@ -119,10 +160,10 @@ const content = {
     paymentCodeUsed: "הקוד כבר נוצל. צריך קוד חדש מהמנהל.",
     paymentDownloadFinal: "הורד PDF סופי (ללא סימן מים)",
     paymentDownloading: "מוריד…",
-    pdfRendering: "טוען תצוגה מקדימה…",
-    pdfDownloadSample: "הורד דוגמת PDF",
-    pdfMobileHint:
-      "הדוגמה מוצגת ישירות בדף — מתאים למובייל ובתוך טלגרם. אפשר גם להוריד את הקובץ למטה.",
+    previewLoadingDetail: "מכין תצוגת תמונה מהטופס…",
+    previewReadyBanner: "הטופס הופק בהצלחה! עברו על התמונה לפני מעבר לתשלום.",
+    previewImageNote:
+      "זוהי תצוגת תמונה בלבד של העמוד הראשון (כולל סימן מים). הקובץ המלא יהיה זמין להורדה לאחר אישור התשלום.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -170,10 +211,10 @@ const content = {
     paymentCodeUsed: "تم استخدام هذا الرمز مسبقًا. اطلب رمزًا جديدًا.",
     paymentDownloadFinal: "تنزيل PDF النهائي (بدون علامة مائية)",
     paymentDownloading: "جاري التنزيل…",
-    pdfRendering: "جاري تحميل المعاينة…",
-    pdfDownloadSample: "تنزيل عيّنة PDF",
-    pdfMobileHint:
-      "تُعرض المعاينة داخل الصفحة — مناسب للهاتف وتيليجرام. يمكنك أيضًا تنزيل الملف أدناه.",
+    previewLoadingDetail: "جاري إعداد معاينة الصورة من النموذج…",
+    previewReadyBanner: "تم إنشاء النموذج. راجعوا الصورة قبل الدفع.",
+    previewImageNote:
+      "معاينة صورة للصفحة الأولى فقط (مع العلامة المائية). الملف الكامل يُتاح بعد تأكيد الدفع.",
   },
 };
 
@@ -189,11 +230,6 @@ const App = () => {
   const [paymentCodeSubmitting, setPaymentCodeSubmitting] = useState(false);
   const [finalPdfDownloading, setFinalPdfDownloading] = useState(false);
 
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState(null);
-  const [pdfDownloadPath, setPdfDownloadPath] = useState(null);
-  const [pdfGenerating, setPdfGenerating] = useState(false);
-  const [pdfError, setPdfError] = useState(null);
-
   const [step1Error, setStep1Error] = useState(null);
 
   const [formData, setFormData] = useState({
@@ -205,10 +241,26 @@ const App = () => {
     idIssueDate: "",
   });
 
+  const [previewImageUrl, setPreviewImageUrl] = useState(null);
+  const [pdfError, setPdfError] = useState(null);
+
+  const cachedPreviewSigRef = useRef(null);
+
+  const previewFormSignature = useMemo(
+    () =>
+      JSON.stringify({
+        fullName: formData.fullName.trim(),
+        fullNameEn: formData.fullNameEn.trim(),
+        idNumber: formData.idNumber.replace(/\D/g, ""),
+        expiryOption: formData.expiryOption,
+      }),
+    [formData.fullName, formData.fullNameEn, formData.idNumber, formData.expiryOption]
+  );
+
   const TELEGRAM_LINK = "https://t.me/m/h_K7ZBosMzdh";
 
-  /** Full-screen step 2 animation until the watermarked PDF is loaded or the request fails. */
-  const step2AwaitingPdf = currentStep === 2 && !pdfPreviewUrl && !pdfError;
+  /** Full-screen step 2 animation until preview JPEG exists or the request fails. */
+  const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -218,7 +270,7 @@ const App = () => {
 
   useEffect(() => {
     if (!step2AwaitingPdf) {
-      if (pdfPreviewUrl || pdfError) {
+      if (previewImageUrl || pdfError) {
         setLoadingProgress(100);
       }
       return undefined;
@@ -227,7 +279,7 @@ const App = () => {
       setLoadingProgress((p) => (p >= 92 ? p : p + 0.9));
     }, 70);
     return () => clearInterval(id);
-  }, [step2AwaitingPdf, pdfPreviewUrl, pdfError]);
+  }, [step2AwaitingPdf, previewImageUrl, pdfError]);
 
   const buildPdfApiUrl = () => {
     const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -240,19 +292,20 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (currentStep !== 2) {
-      setPdfPreviewUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return null;
-      });
-      setPdfDownloadPath(null);
-      setPdfError(null);
-      setPdfGenerating(false);
-    }
-  }, [currentStep]);
-
-  useEffect(() => {
     if (currentStep !== 2) return undefined;
+
+    const step1Err = validateStep1(formData, language);
+    if (step1Err) {
+      setPdfError(step1Err);
+      return undefined;
+    }
+
+    if (
+      cachedPreviewSigRef.current === previewFormSignature &&
+      previewImageUrl
+    ) {
+      return undefined;
+    }
 
     let cancelled = false;
 
@@ -272,15 +325,13 @@ const App = () => {
     };
 
     (async () => {
-      const step1Err = validateStep1(formData, language);
-      if (step1Err) {
-        setPdfGenerating(false);
-        setPdfError(step1Err);
-        return;
-      }
-
-      setPdfGenerating(true);
       setPdfError(null);
+      if (cachedPreviewSigRef.current !== previewFormSignature) {
+        setPreviewImageUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return null;
+        });
+      }
       try {
         const idDigits = formData.idNumber.replace(/\D/g, "");
         const res = await fetch(buildPdfApiUrl(), {
@@ -295,36 +346,26 @@ const App = () => {
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
-        const dlHeader = res.headers.get("X-Pdf-Download-Path");
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        const imageUrl = await renderPdfBlobToPreviewImageUrl(blob);
         if (cancelled) {
-          URL.revokeObjectURL(url);
+          URL.revokeObjectURL(imageUrl);
           return;
         }
-        setPdfDownloadPath(dlHeader);
-        setPdfPreviewUrl((prev) => {
+        setPreviewImageUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
-          return url;
+          return imageUrl;
         });
+        cachedPreviewSigRef.current = previewFormSignature;
       } catch (e) {
         if (!cancelled) setPdfError(e.message || String(e));
-      } finally {
-        if (!cancelled) setPdfGenerating(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    currentStep,
-    formData.fullName,
-    formData.fullNameEn,
-    formData.idNumber,
-    formData.expiryOption,
-    language,
-  ]);
+  }, [currentStep, previewFormSignature, language]);
 
   const steps = [
     { id: 1, label: language === 'he' ? 'פרטי המבוטח' : 'تفاصيل المؤمن عليه', icon: User },
@@ -576,7 +617,7 @@ const App = () => {
               </div>
               <div className="text-center space-y-2">
                 <p className="text-lg font-bold text-slate-800">{t.loadingMsg}</p>
-                <p className="text-sm text-slate-500">אנא המתן, המערכת מאחזרת נתונים מהמרכז הדיגיטלי</p>
+                <p className="text-sm text-slate-500">{t.previewLoadingDetail}</p>
               </div>
               <div className="w-full max-w-xs bg-slate-100 h-2 rounded-full overflow-hidden">
                 <div 
@@ -595,10 +636,7 @@ const App = () => {
               <div className="p-4 bg-emerald-50 border-r-4 border-emerald-500 rounded-lg flex gap-3 text-emerald-900 text-sm shadow-sm">
                 <CheckCircle2 size={20} className="shrink-0 text-emerald-600 mt-0.5" />
                 <div>
-                  <p>הטופס הופק בהצלחה! אנא עיינו בדוגמה לפני מעבר לתשלום.</p>
-                  <p className="text-xs text-emerald-800/90 mt-1">
-                    במובייל ובטלגרם — השתמשו בכפתור ההורדה למטה (קישור מאובטח לשרת).
-                  </p>
+                  <p>{t.previewReadyBanner}</p>
                 </div>
               </div>
 
@@ -611,34 +649,17 @@ const App = () => {
                 </div>
               )}
 
-              {pdfPreviewUrl ? (
-                <>
-                  <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-4 shadow-sm">
-                    <a
-                      href={resolvePdfDownloadHref(pdfDownloadPath, pdfPreviewUrl)}
-                      download="FormPDFPreview-sample.pdf"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-md active:scale-[0.99] min-h-[52px]"
-                    >
-                      <Download className="h-5 w-5 shrink-0" aria-hidden />
-                      {t.pdfDownloadSample}
-                    </a>
-                    <p className="mt-3 text-center text-xs leading-snug text-slate-600">
-                      {t.pdfMobileHint}
-                    </p>
+              {previewImageUrl ? (
+                <div className="relative w-full max-w-md mx-auto space-y-3">
+                  <div className="rounded-xl border border-slate-200 bg-white shadow-inner overflow-hidden">
+                    <img
+                      src={previewImageUrl}
+                      alt=""
+                      className="block w-full h-auto max-h-[85vh] object-contain object-top bg-white"
+                    />
                   </div>
-
-                  <div className="relative w-full max-w-md mx-auto rounded-xl border border-slate-200 bg-slate-50 shadow-inner overflow-hidden min-h-[520px]">
-                    <div className="flex min-h-[520px] flex-col bg-white p-2">
-                      <PdfPagePreview
-                        pdfBlobUrl={pdfPreviewUrl}
-                        ariaLabel={language === "ar" ? "معاينة PDF" : "תצוגת PDF"}
-                        labels={{ loading: t.pdfRendering }}
-                      />
-                    </div>
-                  </div>
-                </>
+                  <p className="text-center text-xs leading-snug text-slate-500 px-1">{t.previewImageNote}</p>
+                </div>
               ) : null}
             </div>
           </div>
