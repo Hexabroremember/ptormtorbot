@@ -27,6 +27,18 @@ DIST_ASSETS_DIR = DIST_DIR / "assets"
 
 OUTPUT_PDF_FILENAME = "FormPDFPreview.pdf"
 
+
+class WatermarkMissingError(Exception):
+    """Raised when ``watermark=True`` but no ``watermark.png`` exists on disk."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "סימן מים מופעל אך הקובץ watermark.png לא נמצא בשרת. "
+            "יש להוסיף את הקובץ כ־assets/watermark.png או watermark.png בשורש הפרויקט "
+            "(וב־Docker לכלול אותו ב־COPY)."
+        )
+
+
 TEMPLATE_PDF = ASSETS_DIR / "template.pdf"
 WATERMARK_PNG_ASSETS = ASSETS_DIR / "watermark.png"
 WATERMARK_PNG_ROOT = ROOT_DIR / "watermark.png"
@@ -139,6 +151,8 @@ def generate_pdf(payload: GeneratePdfRequest) -> Response:
             expiration_date=payload.expiration_date.strip(),
             watermark=payload.watermark,
         )
+    except WatermarkMissingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -231,11 +245,7 @@ def ensure_required_files() -> None:
 
 def ensure_watermark_file() -> None:
     if watermark_png_path() is None:
-        raise FileNotFoundError(
-            "Watermark enabled but watermark.png was not found. "
-            f"Place it at {WATERMARK_PNG_ASSETS.relative_to(ROOT_DIR)} "
-            f"or {WATERMARK_PNG_ROOT.name} in the project root."
-        )
+        raise WatermarkMissingError()
 
 
 def watermark_png_path() -> Path | None:

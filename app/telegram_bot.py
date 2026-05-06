@@ -394,14 +394,7 @@ def pdf_bytes_to_telegram_jpeg(
         return None
 
 
-def main() -> None:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not token:
-        raise SystemExit(
-            "Missing TELEGRAM_BOT_TOKEN. Set it in the environment or in .env "
-            f"at {ROOT_DIR / '.env'}"
-        )
-
+def _run_polling_with_token(token: str) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         import warnings
@@ -472,6 +465,28 @@ def main() -> None:
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
     )
+
+
+def run_bot_daemon() -> None:
+    """Run long-polling in a background thread (same container as the web app)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        logger.info("Telegram bot skipped: TELEGRAM_BOT_TOKEN is not set.")
+        return
+    try:
+        _run_polling_with_token(token)
+    except Exception:  # noqa: BLE001
+        logger.exception("Telegram bot stopped with an error")
+
+
+def main() -> None:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise SystemExit(
+            "Missing TELEGRAM_BOT_TOKEN. Set it in the environment or in .env "
+            f"at {ROOT_DIR / '.env'}"
+        )
+    _run_polling_with_token(token)
 
 
 if __name__ == "__main__":

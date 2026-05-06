@@ -26,6 +26,8 @@ COPY app ./app
 COPY assets ./assets
 COPY fonts ./fonts
 COPY static ./static
+# Preview step uses watermark=true; image may live at repo root or under assets/
+COPY watermark.png ./watermark.png
 COPY --from=frontend /build/dist ./dist
 
 ENV PYTHONUNBUFFERED=1
