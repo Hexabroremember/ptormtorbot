@@ -487,17 +487,36 @@ const App = () => {
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
       const href = resolvePdfDownloadHref(dlHeader, blobUrl);
+
+      const tg = window.Telegram?.WebApp;
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
       if (href && !href.startsWith("blob:")) {
-        window.open(href, "_blank", "noopener,noreferrer");
+        // We have a real HTTPS URL from the server header — use Telegram native API when possible.
+        if (typeof tg?.downloadFile === "function") {
+          // Telegram Bot API 7.11+ — triggers native OS download sheet on iOS.
+          tg.downloadFile(href, "FormPDFPreview.pdf");
+        } else if (isIOS && typeof tg?.openLink === "function") {
+          // Older Telegram on iOS — open in system browser so Safari can offer Save to Files.
+          tg.openLink(href);
+        } else {
+          window.open(href, "_blank", "noopener,noreferrer");
+        }
         URL.revokeObjectURL(blobUrl);
+      } else if (isIOS) {
+        // iOS Safari / Telegram WebView can't trigger <a download> on blob: URLs.
+        // Opening the blob URL directly lets Safari present "Open in…" / "Save to Files".
+        window.open(blobUrl, "_blank");
+        // Delay revocation so the browser has time to read the blob.
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
       } else {
         const a = document.createElement("a");
-        a.href = href;
+        a.href = blobUrl;
         a.download = "FormPDFPreview.pdf";
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(blobUrl);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
       }
     } catch (e) {
       setPaymentCodeError(e.message || String(e));
