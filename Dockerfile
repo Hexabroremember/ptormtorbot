@@ -1,16 +1,18 @@
 # syntax=docker/dockerfile:1
-# Frontend (Vite → dist/) — amd64 required by Render
-FROM --platform=linux/amd64 node:22-alpine AS frontend
+# Frontend (Vite → dist/). Vite + tooling live in dependencies so `npm ci` always installs them.
+FROM node:22-alpine AS frontend
 WORKDIR /build
+
 COPY package.json package-lock.json vite.config.js postcss.config.js tailwind.config.cjs index.html ./
 COPY src ./src
-# Same host as API on Render → relative /generate-pdf and /redeem-payment-code
+
 ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-RUN npm run build
+
+RUN npm ci --no-audit --no-fund && npm run build
 
 # API + serve built SPA from ./dist
-FROM --platform=linux/amd64 python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
