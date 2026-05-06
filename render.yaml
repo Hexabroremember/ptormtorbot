@@ -11,6 +11,6 @@ services:
       - key: WEB_APP_URL
         sync: false
       - key: CORS_ORIGINS
-        sync: false
+        value: "https://beautiful-taiyaki-9e0028.netlify.app"
       - key: PAYMENT_ADMIN_TELEGRAM_IDS
         value: "5319095718"
