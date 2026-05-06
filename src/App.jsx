@@ -120,7 +120,7 @@ const content = {
     back: "חזרה",
     payment: "מעבר לתשלום מאובטח",
     step1Title: "פרטי המבוטח ותוקף",
-    step2Title: "תצוגת דוגמה לטופס פטור מתור",
+    step2Title: "תצוגת דוגמה לטופס פטור מתור שלך",
     step3Title: "בחירת אמצעי תשלום",
     summary: "סיכום הזמנה",
     total: "סה\"כ לתשלום:",
@@ -152,18 +152,18 @@ const content = {
     validationIdDigits: "מספר הזהות חייב להכיל 8–10 ספרות.",
     paymentApprovalTitle: "קוד אישור תשלום",
     paymentApprovalHint:
-      "שילמת דרך העברה בנקאית, קופה או דרך אחרת? הזינו כאן את הקוד החד־פעמי שקיבלתם מהמנהל.",
+      "שילמת דרך קוד משיכה או דרך אחרת? הזינו כאן את הקוד החד פעמי שקיבלתם מהמנהל.",
     paymentApprovalPlaceholder: "הזינו את הקוד",
     paymentApprovalSubmit: "אשר קוד",
-    paymentApprovedBadge: "התשלום אושר — אפשר להוריד את הקובץ הסופי ללא סימן מים.",
+    paymentApprovedBadge: "התשלום אושר — אפשר להוריד את הפטור מתור שלך.",
     paymentCodeInvalid: "הקוד שגוי או לא קיים.",
     paymentCodeUsed: "הקוד כבר נוצל. צריך קוד חדש מהמנהל.",
-    paymentDownloadFinal: "הורד PDF סופי (ללא סימן מים)",
+    paymentDownloadFinal: "הורד את הפטור מתור שלך",
     paymentDownloading: "מוריד…",
     previewLoadingDetail: "מכין תצוגת תמונה מהטופס…",
     previewReadyBanner: "הטופס הופק בהצלחה! עברו על התמונה לפני מעבר לתשלום.",
     previewImageNote:
-      "זוהי תצוגת תמונה בלבד של העמוד הראשון (כולל סימן מים). הקובץ המלא יהיה זמין להורדה לאחר אישור התשלום.",
+      "זוהי תצוגת תמונה בלבד של העמוד הראשון. הקובץ המלא יהיה זמין להורדה לאחר אישור התשלום.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -975,10 +975,6 @@ const App = () => {
           </div>
         </div>
       </main>
-
-      <footer className="max-w-4xl mx-auto text-center text-slate-300 text-[10px] font-bold tracking-widest uppercase">
-        Digital Services • V3.5
-      </footer>
     </div>
   );
 };
