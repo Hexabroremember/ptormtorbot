@@ -253,6 +253,10 @@ const App = () => {
   const [language, setLanguage] = useState('he');
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [cryptoSelected, setCryptoSelected] = useState(false);
+  const [cryptoOrderId, setCryptoOrderId] = useState(null);
+  const [cryptoInvoiceUrl, setCryptoInvoiceUrl] = useState(null);
+  const [cryptoStatus, setCryptoStatus] = useState("idle"); // idle | creating | open | paid | error
+  const [cryptoError, setCryptoError] = useState(null);
 
   const [paymentApproved, setPaymentApproved] = useState(false);
   const [paymentCodeInput, setPaymentCodeInput] = useState("");
@@ -437,13 +441,66 @@ const App = () => {
     }
   };
 
-  const handlePaymentAction = (method) => {
+  const buildCryptoApiUrl = (path) => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}${path}` : path;
+  };
+
+  const handlePaymentAction = async (method) => {
     if (method === 'crypto') {
       setCryptoSelected(true);
+      setCryptoStatus("creating");
+      setCryptoError(null);
+      try {
+        const tg = window.Telegram?.WebApp;
+        const tgUser = tg?.initDataUnsafe?.user;
+        const res = await fetch(buildCryptoApiUrl("/api/crypto/create-invoice"), {
+          method: "POST",
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            price_ils: Number(formData.expiryOption),
+            expiry_option: formData.expiryOption,
+            telegram_user_id: tgUser?.id ?? null,
+            username: tgUser?.username ?? null,
+            first_name: tgUser?.first_name ?? null,
+          }),
+        });
+        if (!res.ok) {
+          const d = await parseJsonDetail(res);
+          throw new Error(d || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        setCryptoOrderId(data.order_id);
+        setCryptoInvoiceUrl(data.invoice_url);
+        setCryptoStatus("open");
+      } catch (e) {
+        setCryptoStatus("error");
+        setCryptoError(e.message || String(e));
+      }
     } else {
       window.open(TELEGRAM_LINK, '_blank');
     }
   };
+
+  // Poll order status every 4 seconds while crypto payment is open
+  useEffect(() => {
+    if (cryptoStatus !== "open" || !cryptoOrderId) return undefined;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(buildCryptoApiUrl(`/api/crypto/order-status?order_id=${cryptoOrderId}`));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.paid) {
+          setCryptoStatus("paid");
+          setPaymentApproved(true);
+          clearInterval(id);
+        }
+      } catch {
+        /* ignore network blip */
+      }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [cryptoStatus, cryptoOrderId]);
 
   const parseJsonDetail = async (res) => {
     try {
@@ -796,36 +853,67 @@ const App = () => {
             <div className="space-y-6 animate-in zoom-in-95 duration-500 max-w-lg mx-auto">
               <div className="p-6 bg-slate-900 text-white rounded-3xl shadow-xl text-center">
                 <div className="flex justify-center mb-4">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-700 text-white">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
                     <Coins size={28} />
                   </div>
                 </div>
-                <h3 className="text-xl font-bold mb-2">{t.paymentMethods.crypto}</h3>
-                <p className="text-sm text-slate-400 mb-6">{t.cryptoMsg}</p>
+                <h3 className="text-xl font-bold mb-1">{t.paymentMethods.crypto}</h3>
+                <p className="text-sm text-slate-400 mb-6">{t.paymentMethods.cryptoSubtitle}</p>
 
-                <div className="bg-white/10 p-4 rounded-xl border border-white/10 break-all font-mono text-xs mb-6">
-                  bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh
-                </div>
+                {cryptoStatus === "creating" ? (
+                  <div className="flex flex-col items-center gap-3 py-6">
+                    <Loader2 size={36} className="animate-spin text-amber-400" />
+                    <p className="text-sm text-slate-400">יוצר דף תשלום…</p>
+                  </div>
+                ) : cryptoStatus === "error" ? (
+                  <div className="rounded-xl bg-red-500/20 p-4 text-sm text-red-300 mb-4">
+                    {cryptoError || "שגיאה ביצירת חשבונית"}
+                  </div>
+                ) : cryptoStatus === "paid" ? (
+                  <div className="flex flex-col items-center gap-3 py-4">
+                    <div className="text-emerald-400 text-4xl">✅</div>
+                    <p className="font-bold text-emerald-400">התשלום אושר!</p>
+                    <p className="text-sm text-slate-400">עכשיו אפשר להוריד את הפטור מתור.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="rounded-xl bg-white/5 border border-white/10 p-4 mb-5 text-right space-y-1">
+                      <p className="text-xs text-slate-400">לחץ על הכפתור למטה לדף התשלום של NOWPayments.</p>
+                      <p className="text-xs text-slate-400">אחרי תשלום, החשבונית תאושר אוטומטית ותקבל קוד.</p>
+                      <p className="text-xs text-slate-500">לא נדרש ליצור חשבון — בחר מטבע ושלם.</p>
+                    </div>
+                    <div className="flex flex-col gap-3 mb-2">
+                      <a
+                        href={cryptoInvoiceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => {
+                          const tg = window.Telegram?.WebApp;
+                          if (typeof tg?.openLink === "function") {
+                            tg.openLink(cryptoInvoiceUrl);
+                            return false;
+                          }
+                        }}
+                        className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 transition-colors px-5 py-3 font-bold text-slate-900 text-sm"
+                      >
+                        <Coins size={18} />
+                        שלם עם קריפטו ← פתח דף תשלום
+                      </a>
+                    </div>
+                    <div className="flex items-center gap-2 justify-center text-xs text-slate-500 animate-pulse">
+                      <Loader2 size={14} className="animate-spin" />
+                      ממתין לאישור תשלום…
+                    </div>
+                  </>
+                )}
 
-                <div className="bg-white p-4 rounded-xl inline-block mb-6">
-                  <QrCode size={140} className="text-slate-900" />
-                </div>
-
-                <div className="flex justify-center gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setCryptoSelected(false)}
-                    className="px-6 py-2 rounded-lg bg-white/10 text-white font-bold hover:bg-white/20 transition-all"
-                  >
-                    {t.back}
-                  </button>
-                  <button
-                    type="button"
-                    className="px-6 py-2 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 transition-all"
-                  >
-                    שלחתי את התשלום
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => { setCryptoSelected(false); setCryptoStatus("idle"); setCryptoOrderId(null); setCryptoInvoiceUrl(null); setCryptoError(null); }}
+                  className="mt-5 px-5 py-2 rounded-lg bg-white/10 text-white text-sm font-bold hover:bg-white/20 transition-all"
+                >
+                  {t.back}
+                </button>
               </div>
               {approvalCard}
             </div>

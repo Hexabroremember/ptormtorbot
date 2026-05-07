@@ -3,15 +3,18 @@ from __future__ import annotations
 from io import BytesIO
 import os
 import re
+import secrets
+import uuid
 from pathlib import Path
 from typing import Any
 
 import fitz
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
@@ -19,7 +22,9 @@ from pydantic import BaseModel, Field
 from app.activity_store import list_events, list_user_directory, log_event, summary as activity_summary
 from app.admin_auth import AdminIdentity, effective_admin_secret, parse_optional_telegram_user, require_admin
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
-from app.payment_codes_store import normalize_code, redeem_code
+from app.crypto_orders import create_order, get_order, list_orders, mark_paid
+from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
+from app.payment_codes_store import issue_new_code, normalize_code, redeem_code
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
 
 
@@ -99,6 +104,14 @@ class RedeemPaymentCodeRequest(BaseModel):
 
 class MaintenanceModeRequest(BaseModel):
     enabled: bool
+
+
+class CreateCryptoInvoiceRequest(BaseModel):
+    price_ils: float = Field(..., gt=0, le=50_000)
+    expiry_option: str | None = Field(default=None, max_length=32)
+    telegram_user_id: int | None = None
+    username: str | None = Field(default=None, max_length=64)
+    first_name: str | None = Field(default=None, max_length=64)
 
 
 def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dict[str, Any]:
@@ -279,6 +292,160 @@ def admin_maintenance(payload: MaintenanceModeRequest, _: AdminIdentity = Depend
     state = set_maintenance_mode(payload.enabled)
     log_event("maintenance_changed", source="admin", meta={"enabled": payload.enabled})
     return state
+
+
+async def _send_telegram_message(chat_id: int, text: str) -> None:
+    """Fire-and-forget: send a message via Telegram Bot API HTTP (no polling process needed)."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token or not chat_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            )
+    except Exception:
+        pass  # never fail the main request because of notification
+
+
+@app.post("/api/crypto/create-invoice")
+async def crypto_create_invoice(payload: CreateCryptoInvoiceRequest, request: Request) -> dict:
+    """Create a NOWPayments invoice and return the hosted payment URL."""
+    base_url = os.environ.get("WEB_APP_URL", "").strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="WEB_APP_URL not configured")
+
+    order_id = str(uuid.uuid4())
+    tg_user = _telegram_user_from_header(request.headers.get("x-telegram-init-data"))
+
+    # Prefer init-data user over payload (init-data is server-verified)
+    real_user_id = (tg_user.id if tg_user else None) or payload.telegram_user_id
+    real_username = (tg_user.username if tg_user else None) or payload.username
+    real_first_name = (tg_user.first_name if tg_user else None) or payload.first_name
+
+    description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(payload.price_ils)}"
+
+    try:
+        invoice = await nowpayments_create_invoice(
+            price_amount=payload.price_ils,
+            price_currency="ils",
+            order_id=order_id,
+            order_description=description,
+            ipn_callback_url=f"{base_url}/api/crypto/ipn",
+            success_url=f"{base_url}/static/index.html?crypto_order={order_id}",
+            cancel_url=f"{base_url}/static/index.html",
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"NOWPayments error: {exc.response.text[:200]}"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    invoice_url = invoice.get("invoice_url") or invoice.get("invoiceUrl")
+    if not invoice_url:
+        raise HTTPException(status_code=502, detail="NOWPayments did not return invoice_url")
+
+    create_order(
+        order_id=order_id,
+        telegram_user_id=real_user_id,
+        username=real_username,
+        first_name=real_first_name,
+        price_ils=payload.price_ils,
+        expiry_option=payload.expiry_option,
+        invoice_url=invoice_url,
+    )
+    log_event(
+        "crypto_invoice_created",
+        source="mini_app",
+        telegram_user_id=real_user_id,
+        username=real_username,
+        first_name=real_first_name,
+        meta={"order_id": order_id, "price_ils": payload.price_ils, "expiry_option": payload.expiry_option},
+    )
+    return {"order_id": order_id, "invoice_url": invoice_url}
+
+
+@app.get("/api/crypto/order-status")
+def crypto_order_status(order_id: str = Query(..., min_length=4)) -> dict:
+    """Poll order payment status (used by Mini App after opening invoice URL)."""
+    order = get_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="order_not_found")
+    return {
+        "order_id": order["order_id"],
+        "status": order["status"],
+        "paid": order["status"] == "paid",
+    }
+
+
+@app.post("/api/crypto/ipn")
+async def crypto_ipn(request: Request) -> JSONResponse:
+    """NOWPayments IPN webhook — validates signature, issues payment code, notifies user."""
+    raw_body = await request.body()
+    sig = request.headers.get("x-nowpayments-sig", "")
+
+    if not verify_ipn_signature(raw_body, sig):
+        raise HTTPException(status_code=400, detail="invalid_ipn_signature")
+
+    try:
+        data: dict[str, Any] = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_json")
+
+    payment_status = (data.get("payment_status") or "").lower()
+    order_id = data.get("order_id", "")
+
+    # Only act on confirmed/finished payments
+    if payment_status not in {"finished", "confirmed", "partially_paid"}:
+        return JSONResponse({"ok": True, "ignored": True, "payment_status": payment_status})
+
+    if not order_id:
+        return JSONResponse({"ok": True, "ignored": True, "reason": "no_order_id"})
+
+    order = get_order(order_id)
+    if order is None:
+        return JSONResponse({"ok": True, "ignored": True, "reason": "order_not_found"})
+
+    # Issue a one-time payment code for this order
+    code = issue_new_code()
+    updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
+
+    log_event(
+        "crypto_payment_confirmed",
+        source="nowpayments_ipn",
+        telegram_user_id=order.get("telegram_user_id"),
+        username=order.get("username"),
+        first_name=order.get("first_name"),
+        meta={
+            "order_id": order_id,
+            "payment_status": payment_status,
+            "price_ils": order.get("price_ils"),
+            "already_processed": not updated,
+        },
+    )
+
+    # Notify the user via Telegram if we know their chat id
+    tg_user_id = order.get("telegram_user_id")
+    if tg_user_id and updated:
+        await _send_telegram_message(
+            tg_user_id,
+            f"✅ <b>תשלום הקריפטו אושר!</b>\n\n"
+            f"קוד האישור שלך: <code>{code}</code>\n\n"
+            "חזור לאפליקציה, הזן את הקוד בשדה אישור התשלום וקבל את הקובץ.",
+        )
+
+    return JSONResponse({"ok": True, "updated": updated})
+
+
+@app.get("/api/admin/crypto-orders")
+def admin_crypto_orders(
+    _: AdminIdentity = Depends(require_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return list_orders(limit=limit, offset=offset)
 
 
 @app.post("/redeem-payment-code")
