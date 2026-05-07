@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import logging
 import os
 import re
 import secrets
@@ -37,6 +38,7 @@ from app.payment_codes_store import (
     redeem_code,
 )
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
+from app.public_url import effective_public_base_url
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
 from app.telegram_notify import send_telegram_document, send_telegram_document_url, send_telegram_message
 
@@ -49,6 +51,8 @@ DIST_DIR = ROOT_DIR / "dist"
 DIST_ASSETS_DIR = DIST_DIR / "assets"
 
 OUTPUT_PDF_FILENAME = "FormPDFPreview.pdf"
+
+logger = logging.getLogger(__name__)
 
 
 class WatermarkMissingError(Exception):
@@ -428,16 +432,26 @@ def _send_final_pdf_to_telegram(
 
     # Prefer URL-based delivery: register the bytes under a download token and tell
     # Telegram to fetch the file from our own HTTPS endpoint — avoids multipart issues.
-    base_url = os.environ.get("WEB_APP_URL", "").strip().rstrip("/")
+    base_url = effective_public_base_url()
     if base_url:
         try:
             dl_token = register_pdf_bytes(pdf_bytes)
             pdf_url = f"{base_url}/pdf-download/{dl_token}"
             ok, err = send_telegram_document_url(chat_id, pdf_url, caption=caption)
+            if not ok:
+                logger.warning(
+                    "Telegram sendDocument URL failed (will try multipart): url=%s err=%s",
+                    pdf_url,
+                    err,
+                )
         except Exception as exc:
             ok, err = False, f"url_method_exception: {exc}"
+            logger.exception("Telegram URL delivery setup failed")
     else:
-        ok, err = False, "WEB_APP_URL_not_configured"
+        ok, err = False, "public_base_url_not_configured"
+        logger.warning(
+            "No public base URL (set WEB_APP_URL or deploy on Railway/Render with auto domain)"
+        )
 
     # If URL method failed (e.g. WEB_APP_URL missing), fall back to multipart upload.
     if not ok:
@@ -459,6 +473,12 @@ def _send_final_pdf_to_telegram(
         first_name=first_name,
         meta={**meta, **({} if ok else {"error": err})},
     )
+    if not ok:
+        logger.warning(
+            "telegram_pdf_delivery_failed user=%s err=%s",
+            telegram_user_id,
+            err,
+        )
     return ok
 
 
@@ -471,7 +491,7 @@ async def crypto_create_invoice(
     tg_init_data: str | None = Query(default=None),
 ) -> dict:
     """Create a NOWPayments invoice and return the hosted payment URL."""
-    base_url = os.environ.get("WEB_APP_URL", "").strip().rstrip("/")
+    base_url = effective_public_base_url()
     if not base_url:
         raise HTTPException(status_code=503, detail="WEB_APP_URL not configured")
 

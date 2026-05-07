@@ -54,7 +54,7 @@ def send_telegram_document_url(
     if not document_url:
         return False, "document_url_missing"
     try:
-        with httpx.Client(timeout=20) as client:
+        with httpx.Client(timeout=45) as client:
             payload: dict[str, str | int] = {
                 "chat_id": chat_id,
                 "document": document_url,
@@ -85,7 +85,7 @@ def send_telegram_document(
     if not token or not chat_id:
         return False, "telegram_bot_token_or_chat_missing"
     try:
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=90) as client:
             files = {
                 "document": (filename, BytesIO(pdf_bytes), "application/pdf"),
             }

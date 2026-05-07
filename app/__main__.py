@@ -11,6 +11,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 from app.nowpayments import nowpayments_key_configured, related_payment_env_names
+from app.public_url import effective_public_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,15 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     # Do not let a local .env override platform-injected secrets (Railway, Render, etc.).
     load_dotenv(ROOT_DIR / ".env", override=False)
+
+    pub = effective_public_base_url()
+    if pub:
+        logger.info("Public app URL for Telegram/callbacks: %s", pub)
+    else:
+        logger.warning(
+            "Public app URL not resolved — set WEB_APP_URL or rely on "
+            "RAILWAY_PUBLIC_DOMAIN / RENDER_EXTERNAL_URL so Telegram can fetch PDF links."
+        )
 
     if nowpayments_key_configured():
         logger.info("NOWPayments API key in environment: yes")
