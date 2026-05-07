@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
+def _should_start_telegram_bot_subprocess() -> bool:
+    """When false, only Uvicorn runs — use if another host/process already polls this bot token."""
+    raw = os.environ.get("START_TELEGRAM_BOT_SUBPROCESS", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     # Do not let a local .env override platform-injected secrets (Railway, Render, etc.).
@@ -44,7 +50,7 @@ def main() -> None:
     port = int(os.environ.get("PORT", "8000"))
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if token:
+    if token and _should_start_telegram_bot_subprocess():
         # PTB/run_polling uses asyncio signal handlers → must run on the main thread of a process,
         # not a background thread (raises ValueError: set_wakeup_fd only works in main thread).
         from app.telegram_bot import run_bot_process_entry
@@ -57,6 +63,11 @@ def main() -> None:
         )
         proc.start()
         logger.info("Telegram bot subprocess started (pid=%s).", proc.pid)
+    elif token:
+        logger.warning(
+            "Telegram bot subprocess skipped — START_TELEGRAM_BOT_SUBPROCESS is disabled. "
+            "Only start one getUpdates poller per TELEGRAM_BOT_TOKEN (see Railway logs if you see Conflict)."
+        )
 
     uvicorn.run("app.main:app", host="0.0.0.0", port=port)
 

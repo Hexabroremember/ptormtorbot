@@ -44,6 +44,7 @@ from app.main import (
 )
 from app.activity_store import log_event
 from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess
+from app.public_url import effective_public_base_url
 
 load_dotenv(ROOT_DIR / ".env", override=False)
 
@@ -65,7 +66,7 @@ def normalize_https_origin(raw: str) -> str:
 
 def mini_app_entry_url() -> str:
     """URL Telegram opens for the Mini App — ``static/index.html`` on the same host."""
-    base = normalize_https_origin(os.environ.get("WEB_APP_URL", ""))
+    base = normalize_https_origin(effective_public_base_url())
     if not base:
         return ""
     low = base.lower()
@@ -78,7 +79,7 @@ def mini_app_entry_url() -> str:
     return f"{base}/static/index.html"
 
 
-# Same raw value as env (for backward compatibility); prefer ``mini_app_entry_url()`` for HTTPS-normalized URL.
+# Deprecated for URL building — use ``effective_public_base_url()`` / ``mini_app_entry_url()`` instead.
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "").strip()
 
 logging.basicConfig(
@@ -86,6 +87,9 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+# True after first Conflict log — PTB may retry polling and emit many identical errors.
+_conflict_warning_emitted = False
 
 HEBREW, ENGLISH, ID_NUM, EXP_DATE = range(4)
 
@@ -148,7 +152,7 @@ BOT_OWNER_TELEGRAM_ID = int(os.environ.get("BOT_OWNER_TELEGRAM_ID", "5319095718"
 
 def admin_mini_app_url_for_user(telegram_user_id: int | None) -> str:
     """Admin Web App URL. For admins, embeds tg_sess so the API trusts Telegram without initData."""
-    base = normalize_https_origin(os.environ.get("WEB_APP_URL", ""))
+    base = normalize_https_origin(effective_public_base_url())
     if not base:
         return ""
     url = f"{base}/admin"
@@ -241,7 +245,10 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     admin_url = admin_mini_app_url_for_user(user.id)
     if not admin_url:
-        await update.message.reply_text("WEB_APP_URL לא מוגדר, אי אפשר לפתוח את פאנל הניהול.")
+        await update.message.reply_text(
+            "לא נמצאה כתובת ציבורית לשרת (WEB_APP_URL או דומיין Railway/Render). "
+            "אי אפשר לפתוח את פאנל הניהול."
+        )
         return
     secret = effective_admin_secret()
     secret_line = (
@@ -572,14 +579,17 @@ def _run_polling_with_token(token: str) -> None:
         pass
 
     async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        global _conflict_warning_emitted  # noqa: PLW0603
         err = context.error
         if isinstance(err, Conflict):
-            logger.warning(
-                "Telegram Conflict: only one client may poll getUpdates per bot token.\n"
-                "  • Close every other bot window (IDE, Task Manager python.exe).\n"
-                "  • If you deployed this bot on a server/hosting, stop that copy.\n"
-                "  • Webhooks are cleared on startup here; rerun after ~5s when another poller exited."
-            )
+            if not _conflict_warning_emitted:
+                _conflict_warning_emitted = True
+                logger.warning(
+                    "Telegram Conflict: only one client may poll getUpdates per bot token.\n"
+                    "  • Stop your local bot / second Railway service using the same TELEGRAM_BOT_TOKEN.\n"
+                    "  • Or set START_TELEGRAM_BOT_SUBPROCESS=0 on one deployment so only one poller runs.\n"
+                    "  • Wait ~10s after stopping the other poller, then redeploy or restart this service."
+                )
             return
         if err:
             logger.exception("Unhandled error in telegram handler", exc_info=err)
