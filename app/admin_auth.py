@@ -27,12 +27,22 @@ class AdminIdentity:
     telegram_user: TelegramWebAppUser | None = None
 
 
+# Primary owner — always treated as admin even if ADMIN_TELEGRAM_IDS omits them (prevents lockout).
+PRIMARY_OWNER_TELEGRAM_ID = 5319095718
+
+
 def admin_ids() -> set[int]:
-    raw = os.environ.get("ADMIN_TELEGRAM_IDS", "").strip()
-    if not raw:
-        raw = os.environ.get("BOT_OWNER_TELEGRAM_ID", "5319095718").strip()
-    ids: set[int] = set()
-    for piece in raw.split(","):
+    ids: set[int] = {PRIMARY_OWNER_TELEGRAM_ID}
+
+    owner_raw = os.environ.get("BOT_OWNER_TELEGRAM_ID", "").strip()
+    if owner_raw:
+        try:
+            ids.add(int(owner_raw))
+        except ValueError:
+            pass
+
+    admins_raw = os.environ.get("ADMIN_TELEGRAM_IDS", "").strip()
+    for piece in admins_raw.split(","):
         piece = piece.strip()
         if not piece:
             continue
@@ -40,6 +50,7 @@ def admin_ids() -> set[int]:
             ids.add(int(piece))
         except ValueError:
             continue
+
     return ids
 
 
