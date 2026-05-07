@@ -108,12 +108,14 @@ def _extract_webapp_init_data(
     authorization: str | None,
     x_telegram_init_data: str | None,
     tg_init_data: str | None,
+    body_init_data: str | None = None,
 ) -> str | None:
-    """Collect initData from headers, query, or Telegram-style Authorization: TMA <data>."""
+    """Collect initData from headers, JSON body, query, or Telegram-style Authorization: TMA <data>."""
     raw = (
         (x_telegram_init_data or "").strip()
         or request.headers.get("x-telegram-init-data", "").strip()
         or request.headers.get("X-Telegram-Init-Data", "").strip()
+        or (body_init_data or "").strip()
         or (tg_init_data or "").strip()
     )
     if raw:
@@ -122,6 +124,24 @@ def _extract_webapp_init_data(
     if auth.lower().startswith("tma "):
         return auth[4:].strip()
     return None
+
+
+def extract_webapp_init_data(
+    request: Request,
+    *,
+    x_telegram_init_data: str | None = None,
+    tg_init_data_query: str | None = None,
+    body_init_data: str | None = None,
+    authorization: str | None = None,
+) -> str | None:
+    """Public helper for Mini App API routes (same sources as admin auth + POST body fallback)."""
+    return _extract_webapp_init_data(
+        request=request,
+        authorization=authorization,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data=tg_init_data_query,
+        body_init_data=body_init_data,
+    )
 
 
 # Signed URL session: bot embeds tg_sess in Web App URL so the panel authenticates as Telegram
@@ -198,6 +218,7 @@ def require_admin(
         authorization=authorization,
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data=tg_init_data,
+        body_init_data=None,
     )
     if init_data:
         user = verify_telegram_init_data(init_data)

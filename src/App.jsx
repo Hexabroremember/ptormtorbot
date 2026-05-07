@@ -93,6 +93,7 @@ export function jsonHeaders(extra = {}) {
   return {
     "Content-Type": "application/json",
     ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
+    ...(initData ? { Authorization: `TMA ${initData}` } : {}),
     ...extra,
   };
 }
@@ -473,6 +474,7 @@ const App = () => {
               expiration_date: computeExpirationForPdf(formData.expiryOption),
               expiry_option: formData.expiryOption,
             },
+            telegram_init_data: telegramInitData() || "",
           }),
         });
         if (!res.ok) {
@@ -556,6 +558,7 @@ const App = () => {
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             expiry_option: formData.expiryOption,
           },
+          telegram_init_data: telegramInitData() || "",
         }),
       });
       if (res.ok) {

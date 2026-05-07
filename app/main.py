@@ -20,7 +20,13 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from app.activity_store import list_events, list_user_directory, log_event, summary as activity_summary
-from app.admin_auth import AdminIdentity, effective_admin_secret, parse_optional_telegram_user, require_admin
+from app.admin_auth import (
+    AdminIdentity,
+    effective_admin_secret,
+    extract_webapp_init_data,
+    parse_optional_telegram_user,
+    require_admin,
+)
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
 from app.crypto_orders import create_order, get_order, list_orders, mark_paid, mark_pdf_sent
 from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
@@ -108,6 +114,7 @@ class RedeemFormSnapshot(BaseModel):
 class RedeemPaymentCodeRequest(BaseModel):
     code: str = Field(..., min_length=4, max_length=64)
     form: RedeemFormSnapshot | None = None
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
 
 
 class MaintenanceModeRequest(BaseModel):
@@ -121,6 +128,7 @@ class CreateCryptoInvoiceRequest(BaseModel):
     username: str | None = Field(default=None, max_length=64)
     first_name: str | None = Field(default=None, max_length=64)
     form: RedeemFormSnapshot | None = None
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
 
 
 class RateLimitOverrideRequest(BaseModel):
@@ -184,15 +192,35 @@ app.add_middleware(
 )
 
 
-def _telegram_user_from_header(init_data: str | None):
-    return parse_optional_telegram_user(init_data)
+def _telegram_user_from_webapp_request(
+    request: Request,
+    *,
+    x_telegram_init_data: str | None = None,
+    tg_init_data_query: str | None = None,
+    body_init_data: str | None = None,
+    authorization: str | None = None,
+):
+    auth = authorization or request.headers.get("Authorization") or request.headers.get("authorization")
+    raw = extract_webapp_init_data(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data_query,
+        body_init_data=body_init_data,
+        authorization=auth,
+    )
+    return parse_optional_telegram_user(raw)
 
 
 def _request_meta(request: Request, *, watermark: bool | None = None) -> dict[str, str | bool | None]:
     ua = request.headers.get("user-agent", "")
+    auth = (request.headers.get("authorization") or "").lower()
+    is_tg = bool(
+        request.headers.get("x-telegram-init-data")
+        or auth.startswith("tma ")
+    )
     return {
         "watermark": watermark,
-        "client": "telegram" if request.headers.get("x-telegram-init-data") else "web",
+        "client": "telegram" if is_tg else "web",
         "user_agent": ua[:120] if ua else None,
     }
 
@@ -397,14 +425,26 @@ def _send_final_pdf_to_telegram(
 
 
 @app.post("/api/crypto/create-invoice")
-async def crypto_create_invoice(payload: CreateCryptoInvoiceRequest, request: Request) -> dict:
+async def crypto_create_invoice(
+    payload: CreateCryptoInvoiceRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict:
     """Create a NOWPayments invoice and return the hosted payment URL."""
     base_url = os.environ.get("WEB_APP_URL", "").strip().rstrip("/")
     if not base_url:
         raise HTTPException(status_code=503, detail="WEB_APP_URL not configured")
 
     order_id = str(uuid.uuid4())
-    tg_user = _telegram_user_from_header(request.headers.get("x-telegram-init-data"))
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        authorization=authorization,
+    )
     check_rate_limit("create_invoice", request, tg_user)
 
     # Prefer init-data user over payload (init-data is server-verified)
@@ -550,7 +590,7 @@ async def crypto_ipn(request: Request) -> JSONResponse:
                 first_name=order.get("first_name"),
                 meta={"order_id": order_id, "error": str(exc)},
             )
-        send_telegram_message(
+        ok_msg, err_msg = send_telegram_message(
             tg_user_id,
             f"✅ <b>התשלום התקבל ואושר!</b>\n\n"
             f"קוד האישור שלך: <code>{code}</code>\n\n"
@@ -560,6 +600,15 @@ async def crypto_ipn(request: Request) -> JSONResponse:
                 else "חזור לאפליקציה, הזן את הקוד בשדה אישור התשלום וקבל את הקובץ."
             ),
         )
+        if not ok_msg:
+            log_event(
+                "telegram_delivery_failed",
+                source="nowpayments_ipn",
+                telegram_user_id=tg_user_id,
+                username=order.get("username"),
+                first_name=order.get("first_name"),
+                meta={"order_id": order_id, "kind": "crypto_payment_notice", "error": err_msg},
+            )
 
     return JSONResponse({"ok": True, "updated": updated})
 
@@ -578,9 +627,17 @@ def redeem_payment_code(
     payload: RedeemPaymentCodeRequest,
     request: Request,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
 ) -> dict[str, bool | str]:
     """Validate and consume a one-time code issued via the Telegram bot."""
-    tg_user = _telegram_user_from_header(x_telegram_init_data)
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        authorization=authorization,
+    )
     check_rate_limit("redeem", request, tg_user)
     redemption = _build_redemption_dict(tg_user, payload.form)
     ok, key = redeem_code(payload.code, redemption=redemption or None)
@@ -613,7 +670,7 @@ def redeem_payment_code(
                     meta={"code_last4": code_hint, "error": str(exc)},
                 )
         if tg_user:
-            send_telegram_message(
+            ok_msg, err_msg = send_telegram_message(
                 tg_user.id,
                 "✅ <b>התשלום אושר.</b>\n"
                 + (
@@ -621,6 +678,28 @@ def redeem_payment_code(
                     if telegram_pdf_sent
                     else "אפשר להוריד את הקובץ הסופי באפליקציה."
                 ),
+            )
+            if not ok_msg:
+                log_event(
+                    "telegram_delivery_failed",
+                    source="mini_app",
+                    telegram_user_id=tg_user.id,
+                    username=tg_user.username,
+                    first_name=tg_user.first_name,
+                    meta={
+                        "code_last4": code_hint,
+                        "kind": "redeem_confirmation",
+                        "error": err_msg,
+                    },
+                )
+        else:
+            log_event(
+                "telegram_notify_skipped_no_user",
+                source="mini_app",
+                meta={
+                    "code_last4": code_hint,
+                    "reason": "missing_or_invalid_init_data",
+                },
             )
         log_event(
             "payment_code_redeemed",
@@ -633,6 +712,7 @@ def redeem_payment_code(
                 "code_last4": code_hint,
                 "redemption": redemption,
                 "telegram_pdf_sent": telegram_pdf_sent,
+                "telegram_user_resolved": bool(tg_user),
             },
         )
         return {"ok": True}
@@ -662,10 +742,18 @@ def generate_pdf(
     payload: GeneratePdfRequest,
     request: Request,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
 ) -> Response:
     if maintenance_mode_enabled():
         raise HTTPException(status_code=503, detail="maintenance_mode")
-    tg_user = _telegram_user_from_header(x_telegram_init_data)
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=None,
+        authorization=authorization,
+    )
     check_rate_limit("preview_pdf" if payload.watermark else "final_pdf", request, tg_user)
     try:
         pdf_bytes = replace_fields(
