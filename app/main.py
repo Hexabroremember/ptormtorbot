@@ -104,6 +104,7 @@ class GeneratePdfRequest(BaseModel):
     id_number: str = Field(..., min_length=1, max_length=24)
     expiration_date: str = Field(..., min_length=1, max_length=24)
     watermark: bool = False
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
 
 
 class RedeemFormSnapshot(BaseModel):
@@ -430,8 +431,32 @@ def _send_final_pdf_to_telegram(
 
     caption = "הקובץ הסופי נשמר כאן בצ׳אט כדי שלא יאבד."
 
-    # Prefer URL-based delivery: register the bytes under a download token and tell
-    # Telegram to fetch the file from our own HTTPS endpoint — avoids multipart issues.
+    # Multipart first: upload bytes directly from this worker — no reliance on GET /pdf-download
+    # being served by the same instance that registered the SQLite token (multi-worker / LB issues).
+    ok, err = send_telegram_document(
+        chat_id,
+        pdf_bytes,
+        filename=OUTPUT_PDF_FILENAME,
+        caption=caption,
+    )
+    if ok:
+        log_event(
+            "telegram_final_pdf_sent",
+            source=event_source,
+            telegram_user_id=telegram_user_id,
+            username=username,
+            first_name=first_name,
+            meta={**meta, "delivery": "multipart"},
+        )
+        return True
+
+    logger.warning(
+        "Telegram sendDocument multipart failed (will try URL): user=%s err=%s",
+        telegram_user_id,
+        err,
+    )
+
+    url_err = err
     base_url = effective_public_base_url()
     if base_url:
         try:
@@ -440,46 +465,41 @@ def _send_final_pdf_to_telegram(
             ok, err = send_telegram_document_url(chat_id, pdf_url, caption=caption)
             if not ok:
                 logger.warning(
-                    "Telegram sendDocument URL failed (will try multipart): url=%s err=%s",
+                    "Telegram sendDocument URL failed: url=%s err=%s",
                     pdf_url,
                     err,
                 )
+            else:
+                log_event(
+                    "telegram_final_pdf_sent",
+                    source=event_source,
+                    telegram_user_id=telegram_user_id,
+                    username=username,
+                    first_name=first_name,
+                    meta={**meta, "delivery": "url"},
+                )
+                return True
         except Exception as exc:
-            ok, err = False, f"url_method_exception: {exc}"
-            logger.exception("Telegram URL delivery setup failed")
+            err = f"url_method_exception: {exc}"
+            logger.exception("Telegram URL delivery failed")
     else:
-        ok, err = False, "public_base_url_not_configured"
+        err = "public_base_url_not_configured"
         logger.warning(
-            "No public base URL (set WEB_APP_URL or deploy on Railway/Render with auto domain)"
+            "No public base URL for Telegram URL fallback (set WEB_APP_URL or Railway/Render domain)"
         )
 
-    # If URL method failed (e.g. WEB_APP_URL missing), fall back to multipart upload.
-    if not ok:
-        url_err = err
-        ok, err = send_telegram_document(
-            chat_id,
-            pdf_bytes,
-            filename=OUTPUT_PDF_FILENAME,
-            caption=caption,
-        )
-        if not ok:
-            err = f"url={url_err} | multipart={err}"
+    err = f"multipart={url_err} | url_or_fallback={err}"
 
     log_event(
-        "telegram_final_pdf_sent" if ok else "telegram_delivery_failed",
+        "telegram_delivery_failed",
         source=event_source,
         telegram_user_id=telegram_user_id,
         username=username,
         first_name=first_name,
-        meta={**meta, **({} if ok else {"error": err})},
+        meta={**meta, "error": err},
     )
-    if not ok:
-        logger.warning(
-            "telegram_pdf_delivery_failed user=%s err=%s",
-            telegram_user_id,
-            err,
-        )
-    return ok
+    logger.warning("telegram_pdf_delivery_failed user=%s err=%s", telegram_user_id, err)
+    return False
 
 
 @app.post("/api/crypto/create-invoice")
@@ -696,6 +716,11 @@ def redeem_payment_code(
         body_init_data=payload.telegram_init_data,
         authorization=authorization,
     )
+    logger.info(
+        "redeem_payment_code incoming tg_user_id=%s has_body_init=%s",
+        tg_user.id if tg_user else None,
+        bool((payload.telegram_init_data or "").strip()),
+    )
     check_rate_limit("redeem", request, tg_user)
     redemption = _build_redemption_dict(tg_user, payload.form)
     ok, key = redeem_code(payload.code, redemption=redemption or None)
@@ -829,7 +854,7 @@ def generate_pdf(
         request,
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data,
-        body_init_data=None,
+        body_init_data=payload.telegram_init_data,
         authorization=authorization,
     )
     # Only rate-limit preview (watermark=True) requests; final downloads are gated by single-use code.
@@ -881,7 +906,9 @@ def download_pdf_by_token(token: str, request: Request) -> Response:
     """HTTPS download URL for the same bytes as ``POST /generate-pdf`` (Telegram-friendly)."""
     data = get_pdf_bytes(token)
     if data is None:
+        logger.warning("pdf_download miss token_prefix=%s", token[:16])
         raise HTTPException(status_code=404, detail="download_expired_or_invalid")
+    logger.info("pdf_download ok bytes=%s token_prefix=%s", len(data), token[:12])
     log_event("pdf_downloaded", source="mini_app", meta=_request_meta(request))
     return Response(
         content=data,

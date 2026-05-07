@@ -58,7 +58,6 @@ def send_telegram_document_url(
             payload: dict[str, str | int] = {
                 "chat_id": chat_id,
                 "document": document_url,
-                "parse_mode": "HTML",
             }
             if caption:
                 payload["caption"] = caption
@@ -91,7 +90,6 @@ def send_telegram_document(
             }
             data: dict[str, str | int] = {
                 "chat_id": chat_id,
-                "parse_mode": "HTML",
             }
             if caption:
                 data["caption"] = caption

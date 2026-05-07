@@ -88,6 +88,41 @@ export function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+/** Telegram often fills initData shortly after load — wait before redeem so the server can resolve chat_id. */
+function waitForTelegramInitData(maxMs = 12000, intervalMs = 50) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let done = false;
+    let intervalId = 0;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      window.clearInterval(intervalId);
+      resolve(value);
+    };
+    const check = () => {
+      const d = telegramInitData();
+      if (d) {
+        finish(d);
+        return;
+      }
+      if (Date.now() - start >= maxMs) {
+        finish("");
+      }
+    };
+    intervalId = window.setInterval(check, intervalMs);
+    check();
+    window.Telegram?.WebApp?.onEvent?.("viewport_changed", check);
+  });
+}
+
+/** Append initData as query param — some proxies strip custom headers on POST. */
+function appendTgInitQuery(url, initData) {
+  if (!initData || url.includes("tg_init_data=")) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}tg_init_data=${encodeURIComponent(initData)}`;
+}
+
 export function jsonHeaders(extra = {}) {
   const initData = telegramInitData();
   return {
@@ -301,6 +336,10 @@ const App = () => {
   const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
 
   useEffect(() => {
+    window.Telegram?.WebApp?.ready?.();
+  }, []);
+
+  useEffect(() => {
     if (currentStep === 2) {
       setLoadingProgress(0);
     }
@@ -384,6 +423,7 @@ const App = () => {
             id_number: idDigits,
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             watermark: true,
+            telegram_init_data: telegramInitData() || "",
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
@@ -459,6 +499,8 @@ const App = () => {
       setCryptoStatus("creating");
       setCryptoError(null);
       try {
+        window.Telegram?.WebApp?.ready?.();
+        await waitForTelegramInitData(12000);
         const tg = window.Telegram?.WebApp;
         const tgUser = tg?.initDataUnsafe?.user;
         const res = await fetch(buildCryptoApiUrl("/api/crypto/create-invoice"), {
@@ -548,8 +590,12 @@ const App = () => {
     }
     setPaymentCodeSubmitting(true);
     try {
+      window.Telegram?.WebApp?.ready?.();
+      await waitForTelegramInitData(12000);
+      const initData = telegramInitData();
+      const redeemUrl = appendTgInitQuery(buildRedeemApiUrl(), initData);
       const idDigits = formData.idNumber.replace(/\D/g, "");
-      const res = await fetch(buildRedeemApiUrl(), {
+      const res = await fetch(redeemUrl, {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({
@@ -561,7 +607,7 @@ const App = () => {
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             expiry_option: formData.expiryOption,
           },
-          telegram_init_data: telegramInitData() || "",
+          telegram_init_data: initData || "",
         }),
       });
       if (res.ok) {
@@ -592,17 +638,18 @@ const App = () => {
     setPaymentCodeError(null);
     try {
       const idDigits = formData.idNumber.replace(/\D/g, "");
-      const res = await fetch(buildPdfApiUrl(), {
-        method: "POST",
-        headers: jsonHeaders(),
-        body: JSON.stringify({
-          hebrew_full_name: formData.fullName.trim(),
-          english_full_name: formData.fullNameEn.trim().toUpperCase(),
-          id_number: idDigits,
-          expiration_date: computeExpirationForPdf(formData.expiryOption),
-          watermark: false,
-        }),
-      });
+        const res = await fetch(buildPdfApiUrl(), {
+          method: "POST",
+          headers: jsonHeaders(),
+          body: JSON.stringify({
+            hebrew_full_name: formData.fullName.trim(),
+            english_full_name: formData.fullNameEn.trim().toUpperCase(),
+            id_number: idDigits,
+            expiration_date: computeExpirationForPdf(formData.expiryOption),
+            watermark: false,
+            telegram_init_data: telegramInitData() || "",
+          }),
+        });
       if (!res.ok) {
         const detail = await parseJsonDetail(res);
         throw new Error(detail || `HTTP ${res.status}`);
