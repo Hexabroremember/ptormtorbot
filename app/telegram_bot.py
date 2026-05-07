@@ -45,7 +45,7 @@ from app.main import (
 from app.activity_store import log_event
 from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess
 
-load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env", override=False)
 
 
 def normalize_https_origin(raw: str) -> str:

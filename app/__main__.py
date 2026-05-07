@@ -10,6 +10,8 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 
+from app.nowpayments import nowpayments_key_configured, related_payment_env_names
+
 logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,15 +19,17 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    # Same as telegram_bot: pick up repo `.env` when present (local Docker runs).
-    load_dotenv(ROOT_DIR / ".env")
+    # Do not let a local .env override platform-injected secrets (Railway, Render, etc.).
+    load_dotenv(ROOT_DIR / ".env", override=False)
 
-    np_key = bool(
-        os.environ.get("NOWPAYMENTS_API_KEY", "").strip()
-        or os.environ.get("NOW_PAYMENTS_API_KEY", "").strip()
-        or os.environ.get("NOWPAYMENTS_KEY", "").strip()
-    )
-    logger.info("NOWPayments API key in environment: %s", "yes" if np_key else "no")
+    if nowpayments_key_configured():
+        logger.info("NOWPayments API key in environment: yes")
+    else:
+        hint = related_payment_env_names()
+        logger.warning(
+            "NOWPayments API key in environment: no. Related env var names (not values): %s",
+            hint if hint else "(none — add NOWPAYMENTS_API_KEY to this Railway service Variables)",
+        )
 
     port = int(os.environ.get("PORT", "8000"))
 

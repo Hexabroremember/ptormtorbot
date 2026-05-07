@@ -11,22 +11,58 @@ import httpx
 
 NOWPAYMENTS_BASE = "https://api.nowpayments.io/v1"
 
-
-def _api_key() -> str:
-    """Read API key from env. Checks common alternate names (dashboard typos)."""
-    for name in (
+_API_KEY_ALIASES = frozenset(
+    {
         "NOWPAYMENTS_API_KEY",
         "NOW_PAYMENTS_API_KEY",
         "NOWPAYMENTS_KEY",
-    ):
+    }
+)
+_IPN_ALIASES = frozenset(
+    {
+        "NOWPAYMENTS_IPN_SECRET",
+        "NOW_PAYMENTS_IPN_SECRET",
+    }
+)
+
+
+def _normalize_env_name(name: str) -> str:
+    return name.strip().upper().replace("-", "_")
+
+
+def _env_value_for_aliases(aliases: frozenset[str]) -> str:
+    """Resolve first non-empty value; exact name first, then case-insensitive key match."""
+    for name in aliases:
         v = os.environ.get(name, "").strip()
         if v:
             return v
+    wanted = {_normalize_env_name(a) for a in aliases}
+    for k, v in os.environ.items():
+        if _normalize_env_name(k) in wanted and v.strip():
+            return v.strip()
     return ""
 
 
+def _api_key() -> str:
+    return _env_value_for_aliases(_API_KEY_ALIASES)
+
+
+def nowpayments_key_configured() -> bool:
+    return bool(_api_key())
+
+
+def related_payment_env_names() -> list[str]:
+    """Names only — for logs when debugging Railway variable typos."""
+    out: list[str] = []
+    for k in os.environ:
+        lk = k.lower()
+        if "nowpay" in lk or "now_payment" in lk or ("payment" in lk and "now" in lk):
+            out.append(k)
+    return sorted(out)
+
+
 def _ipn_secret() -> str:
-    return os.environ.get("NOWPAYMENTS_IPN_SECRET", "").strip()
+    return _env_value_for_aliases(_IPN_ALIASES)
 
 
 async def create_invoice(
