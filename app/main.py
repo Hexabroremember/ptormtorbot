@@ -362,6 +362,7 @@ def generate_pdf(
         first_name=tg_user.first_name if tg_user else None,
         meta={
             **_request_meta(request, watermark=payload.watermark),
+            "payment_status": "paid_final" if not payload.watermark else "preview_unpaid",
             "form": {
                 "hebrew_full_name": payload.hebrew_full_name,
                 "english_full_name": payload.english_full_name,

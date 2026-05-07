@@ -199,6 +199,24 @@ function FormSnapshotCard({ title, data }) {
   );
 }
 
+/** pdf_generated: preview (watermark) = לא שולם; final = שולם (אחרי קוד תשלום) */
+function pdfPaymentBadge(meta) {
+  const ps = meta.payment_status;
+  if (ps === "paid_final" || ps === "paid") {
+    return { label: "שולם", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
+  }
+  if (ps === "preview_unpaid" || ps === "preview") {
+    return { label: "לא שולם", className: "bg-amber-100 text-amber-900 ring-1 ring-amber-200" };
+  }
+  if (meta.watermark === true) {
+    return { label: "לא שולם", className: "bg-amber-100 text-amber-900 ring-1 ring-amber-200" };
+  }
+  if (meta.watermark === false) {
+    return { label: "שולם", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
+  }
+  return { label: "לא ידוע", className: "bg-slate-100 text-slate-600" };
+}
+
 export default function AdminPanel() {
   const [summary, setSummary] = useState(null);
   const [events, setEvents] = useState([]);
@@ -609,6 +627,7 @@ export default function AdminPanel() {
                   meta.code_last4 ||
                   meta.reason;
                 const open = detailEventId === event.id;
+                const payBadge = event.event_type === "pdf_generated" ? pdfPaymentBadge(meta) : null;
                 return (
                   <div key={event.id} className="border-b border-slate-100 py-3 last:border-b-0">
                     <button
@@ -622,6 +641,13 @@ export default function AdminPanel() {
                       <span className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold">{event.event_type}</span>
+                          {payBadge ? (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-black ${payBadge.className}`}
+                            >
+                              {payBadge.label}
+                            </span>
+                          ) : null}
                           {hasDetail ? (
                             <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-bold text-blue-800">
                               פרטים
@@ -653,8 +679,18 @@ export default function AdminPanel() {
                         ) : null}
                         <FormSnapshotCard title="טופס / נתונים" data={meta.form} />
                         <FormSnapshotCard title="מימוש קוד (צילום)" data={meta.redemption} />
-                        {meta.watermark !== undefined && meta.watermark !== null ? (
-                          <p className="text-xs text-slate-500">דוגמה עם סימן מים: {String(meta.watermark)}</p>
+                        {event.event_type === "pdf_generated" ? (
+                          <p className="text-xs text-slate-600">
+                            <span className="font-bold text-slate-800">סטטוס תשלום:</span>{" "}
+                            {payBadge ? (
+                              <span className={`font-bold ${payBadge.label === "שולם" ? "text-emerald-700" : "text-amber-800"}`}>
+                                {payBadge.label}
+                                {payBadge.label === "לא שולם"
+                                  ? " — תצוגת דוגמה (עם סימון דוגמה)"
+                                  : " — PDF סופי (אחרי אישור תשלום)"}
+                              </span>
+                            ) : null}
+                          </p>
                         ) : null}
                       </div>
                     ) : null}
