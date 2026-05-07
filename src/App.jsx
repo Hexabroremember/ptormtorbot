@@ -466,12 +466,27 @@ const App = () => {
       setPaymentCodeError(t.paymentCodeInvalid);
       return;
     }
+    const step1Err = validateStep1(formData, language);
+    if (step1Err) {
+      setPaymentCodeError(step1Err);
+      return;
+    }
     setPaymentCodeSubmitting(true);
     try {
+      const idDigits = formData.idNumber.replace(/\D/g, "");
       const res = await fetch(buildRedeemApiUrl(), {
         method: "POST",
         headers: jsonHeaders(),
-        body: JSON.stringify({ code: trimmed }),
+        body: JSON.stringify({
+          code: trimmed,
+          form: {
+            hebrew_full_name: formData.fullName.trim(),
+            english_full_name: formData.fullNameEn.trim().toUpperCase(),
+            id_number: idDigits,
+            expiration_date: computeExpirationForPdf(formData.expiryOption),
+            expiry_option: formData.expiryOption,
+          },
+        }),
       });
       if (res.ok) {
         setPaymentApproved(true);

@@ -4,6 +4,7 @@ from io import BytesIO
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 import fitz
 import qrcode
@@ -15,10 +16,10 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
-from app.activity_store import list_events, log_event, summary as activity_summary
+from app.activity_store import list_events, list_user_directory, log_event, summary as activity_summary
 from app.admin_auth import AdminIdentity, effective_admin_secret, parse_optional_telegram_user, require_admin
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
-from app.payment_codes_store import redeem_code
+from app.payment_codes_store import normalize_code, redeem_code
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
 
 
@@ -83,12 +84,43 @@ class GeneratePdfRequest(BaseModel):
     watermark: bool = False
 
 
+class RedeemFormSnapshot(BaseModel):
+    hebrew_full_name: str | None = Field(default=None, max_length=120)
+    english_full_name: str | None = Field(default=None, max_length=120)
+    id_number: str | None = Field(default=None, max_length=32)
+    expiration_date: str | None = Field(default=None, max_length=48)
+    expiry_option: str | None = Field(default=None, max_length=32)
+
+
 class RedeemPaymentCodeRequest(BaseModel):
     code: str = Field(..., min_length=4, max_length=64)
+    form: RedeemFormSnapshot | None = None
 
 
 class MaintenanceModeRequest(BaseModel):
     enabled: bool
+
+
+def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dict[str, Any]:
+    """Persist Mini App user + optional form snapshot when a payment code is redeemed."""
+    out: dict[str, Any] = {}
+    if tg_user:
+        out["telegram_user_id"] = tg_user.id
+        if tg_user.username:
+            out["username"] = tg_user.username
+        if tg_user.first_name:
+            out["first_name"] = tg_user.first_name
+    if form:
+        raw = form.model_dump(exclude_none=True)
+        for key in ("hebrew_full_name", "english_full_name", "id_number", "expiration_date", "expiry_option"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                out[key] = val.strip()
+            elif val is not None and key == "expiry_option":
+                s = str(val).strip()
+                if s:
+                    out[key] = s
+    return out
 
 
 def _index_html_response() -> HTMLResponse:
@@ -196,6 +228,15 @@ def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
     }
 
 
+@app.get("/api/admin/users")
+def admin_users(
+    _: AdminIdentity = Depends(require_admin),
+    limit: int = Query(default=150, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return list_user_directory(limit=limit, offset=offset)
+
+
 @app.get("/api/admin/events")
 def admin_events(
     _: AdminIdentity = Depends(require_admin),
@@ -248,7 +289,10 @@ def redeem_payment_code(
 ) -> dict[str, bool | str]:
     """Validate and consume a one-time code issued via the Telegram bot."""
     tg_user = _telegram_user_from_header(x_telegram_init_data)
-    ok, key = redeem_code(payload.code)
+    redemption = _build_redemption_dict(tg_user, payload.form)
+    ok, key = redeem_code(payload.code, redemption=redemption or None)
+    norm = normalize_code(payload.code)
+    code_hint = norm[-4:].upper() if len(norm) >= 4 else None
     if ok:
         log_event(
             "payment_code_redeemed",
@@ -256,7 +300,7 @@ def redeem_payment_code(
             telegram_user_id=tg_user.id if tg_user else None,
             username=tg_user.username if tg_user else None,
             first_name=tg_user.first_name if tg_user else None,
-            meta=_request_meta(request),
+            meta={**_request_meta(request), "code_last4": code_hint, "redemption": redemption},
         )
         return {"ok": True}
     if key == "already_used":
@@ -266,7 +310,7 @@ def redeem_payment_code(
             telegram_user_id=tg_user.id if tg_user else None,
             username=tg_user.username if tg_user else None,
             first_name=tg_user.first_name if tg_user else None,
-            meta={**_request_meta(request), "reason": "already_used"},
+            meta={**_request_meta(request), "reason": "already_used", "code_last4": code_hint},
         )
         raise HTTPException(status_code=400, detail="code_already_used")
     log_event(
@@ -275,7 +319,7 @@ def redeem_payment_code(
         telegram_user_id=tg_user.id if tg_user else None,
         username=tg_user.username if tg_user else None,
         first_name=tg_user.first_name if tg_user else None,
-        meta={**_request_meta(request), "reason": "invalid"},
+        meta={**_request_meta(request), "reason": "invalid", "code_last4": code_hint},
     )
     raise HTTPException(status_code=400, detail="invalid_code")
 
@@ -316,7 +360,15 @@ def generate_pdf(
         telegram_user_id=tg_user.id if tg_user else None,
         username=tg_user.username if tg_user else None,
         first_name=tg_user.first_name if tg_user else None,
-        meta=_request_meta(request, watermark=payload.watermark),
+        meta={
+            **_request_meta(request, watermark=payload.watermark),
+            "form": {
+                "hebrew_full_name": payload.hebrew_full_name,
+                "english_full_name": payload.english_full_name,
+                "id_number": payload.id_number,
+                "expiration_date": payload.expiration_date,
+            },
+        },
     )
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 

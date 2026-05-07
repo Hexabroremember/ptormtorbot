@@ -3,13 +3,17 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  ChevronDown,
+  ChevronUp,
   Copy,
   KeyRound,
   Loader2,
+  Receipt,
   RefreshCw,
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
+  UserCircle,
   Users,
 } from "lucide-react";
 
@@ -165,6 +169,36 @@ function formatDate(value) {
   }
 }
 
+const FORM_FIELD_LABELS = {
+  hebrew_full_name: "שם בעברית",
+  english_full_name: "שם באנגלית",
+  id_number: "תעודת זהות",
+  expiration_date: "תוקף",
+  expiry_option: "בחירת תוקף / חבילה",
+  telegram_user_id: "מזהה טלגרם",
+  username: "משתמש",
+  first_name: "שם פרטי",
+};
+
+function FormSnapshotCard({ title, data }) {
+  if (!data || typeof data !== "object") return null;
+  const entries = Object.entries(data).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  if (!entries.length) return null;
+  return (
+    <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-right">
+      {title ? <div className="mb-2 text-xs font-bold text-slate-600">{title}</div> : null}
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {entries.map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="text-xs text-slate-500">{FORM_FIELD_LABELS[k] || k}</dt>
+            <dd className="font-mono text-sm font-semibold break-all text-slate-900 ltr">{String(v)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export default function AdminPanel() {
   const [summary, setSummary] = useState(null);
   const [events, setEvents] = useState([]);
@@ -179,6 +213,9 @@ export default function AdminPanel() {
   const [showAccessCode, setShowAccessCode] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
   const [hasTgSess, setHasTgSess] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [usersTotal, setUsersTotal] = useState(0);
+  const [detailEventId, setDetailEventId] = useState(null);
 
   const isTelegram = Boolean(
     typeof window !== "undefined" && window.Telegram?.WebApp,
@@ -190,18 +227,24 @@ export default function AdminPanel() {
     [summary],
   );
 
+  const redeemStats = summary?.activity?.redeem_stats || {};
+  const totalEv = summary?.activity?.total_events || 1;
+
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const [summaryData, eventsData, codesData] = await Promise.all([
+      const [summaryData, eventsData, codesData, usersData] = await Promise.all([
         adminFetch("/api/admin/summary"),
-        adminFetch("/api/admin/events?limit=80"),
+        adminFetch("/api/admin/events?limit=120"),
         adminFetch("/api/admin/payment-codes"),
+        adminFetch("/api/admin/users?limit=200"),
       ]);
       setSummary(summaryData);
       setEvents(eventsData.items || []);
       setCodes(codesData.items || []);
+      setUsers(usersData.items || []);
+      setUsersTotal(usersData.total ?? 0);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -403,12 +446,24 @@ export default function AdminPanel() {
           </div>
         ) : null}
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <StatCard icon={Activity} label="אירועים" value={summary?.activity?.total_events ?? "-"} />
           <StatCard
             icon={Users}
             label="משתמשים מזוהים"
             value={summary?.activity?.unique_users ?? "-"}
+            tone="emerald"
+          />
+          <StatCard
+            icon={Receipt}
+            label="מימושי קודים"
+            value={redeemStats.total_redemptions ?? "-"}
+            tone="blue"
+          />
+          <StatCard
+            icon={UserCircle}
+            label="משתמשים שמימשו קוד"
+            value={redeemStats.distinct_redeemers ?? "-"}
             tone="emerald"
           />
           <StatCard
@@ -423,6 +478,51 @@ export default function AdminPanel() {
             value={maintenanceEnabled ? "פעיל" : "כבוי"}
             tone={maintenanceEnabled ? "amber" : "slate"}
           />
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-black">
+              <UserCircle size={20} />
+              משתמשים ({usersTotal})
+            </h2>
+            <p className="text-xs text-slate-500">
+              סיכום לפי מזהה טלגרם · רכישות ישירות בעתיד יתווספו כאן
+            </p>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead className="bg-slate-50 text-right text-xs font-bold text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">מזהה</th>
+                  <th className="px-3 py-2">שם</th>
+                  <th className="px-3 py-2">@</th>
+                  <th className="px-3 py-2">אירועים</th>
+                  <th className="px-3 py-2">מימוש קוד</th>
+                  <th className="px-3 py-2">יצירת PDF</th>
+                  <th className="px-3 py-2">הורדות</th>
+                  <th className="px-3 py-2">בוט</th>
+                  <th className="px-3 py-2">נראה לאחרונה</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.telegram_user_id} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-mono text-xs ltr">{u.telegram_user_id}</td>
+                    <td className="px-3 py-2">{u.first_name || "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs ltr">{u.username ? `@${u.username}` : "—"}</td>
+                    <td className="px-3 py-2">{u.event_count}</td>
+                    <td className="px-3 py-2">{u.redeem_count}</td>
+                    <td className="px-3 py-2">{u.pdf_generated_count}</td>
+                    <td className="px-3 py-2">{u.pdf_download_count}</td>
+                    <td className="px-3 py-2">{u.bot_events_count}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(u.last_seen_ts)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!users.length ? <p className="mt-3 text-sm text-slate-500">אין משתמשים מזוהים באירועים עדיין.</p> : null}
         </section>
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -447,7 +547,7 @@ export default function AdminPanel() {
                         style={{
                           width: `${Math.max(
                             6,
-                            Math.round((item.count / Math.max(1, summary.activity.total_events)) * 100),
+                            Math.round((item.count / Math.max(1, totalEv)) * 100),
                           )}%`,
                         }}
                       />
@@ -499,31 +599,78 @@ export default function AdminPanel() {
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
-            <h2 className="mb-4 text-lg font-black">פעילות אחרונה</h2>
-            <div className="max-h-[520px] overflow-auto">
-              {events.map((event) => (
-                <div key={event.id} className="border-b border-slate-100 py-3 last:border-b-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="font-bold">{event.event_type}</div>
-                    <div className="text-xs text-slate-500">{formatDate(event.ts)}</div>
+            <h2 className="mb-4 text-lg font-black">פעילות ופרטים</h2>
+            <div className="max-h-[640px] overflow-auto">
+              {events.map((event) => {
+                const meta = event.meta || {};
+                const hasDetail =
+                  (meta.form && Object.keys(meta.form).length) ||
+                  (meta.redemption && Object.keys(meta.redemption).length) ||
+                  meta.code_last4 ||
+                  meta.reason;
+                const open = detailEventId === event.id;
+                return (
+                  <div key={event.id} className="border-b border-slate-100 py-3 last:border-b-0">
+                    <button
+                      type="button"
+                      className={`flex w-full items-start justify-between gap-2 text-right ${hasDetail ? "" : "cursor-default"}`}
+                      onClick={() => {
+                        if (!hasDetail) return;
+                        setDetailEventId(open ? null : event.id);
+                      }}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold">{event.event_type}</span>
+                          {hasDetail ? (
+                            <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-bold text-blue-800">
+                              פרטים
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {event.source}
+                          {event.telegram_user_id ? ` · ${event.telegram_user_id}` : ""}
+                          {event.username ? ` · @${event.username}` : ""}
+                        </div>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-slate-500">
+                        {formatDate(event.ts)}
+                        {hasDetail ? (open ? <ChevronUp size={16} /> : <ChevronDown size={16} />) : null}
+                      </span>
+                    </button>
+                    {open && hasDetail ? (
+                      <div className="mt-2 space-y-2">
+                        {meta.code_last4 ? (
+                          <p className="text-xs text-slate-600 ltr">
+                            קוד (4 ספרות אחרונות): <strong>{meta.code_last4}</strong>
+                          </p>
+                        ) : null}
+                        {meta.reason ? (
+                          <p className="text-xs text-amber-700">
+                            סיבה: <strong>{meta.reason}</strong>
+                          </p>
+                        ) : null}
+                        <FormSnapshotCard title="טופס / נתונים" data={meta.form} />
+                        <FormSnapshotCard title="מימוש קוד (צילום)" data={meta.redemption} />
+                        {meta.watermark !== undefined && meta.watermark !== null ? (
+                          <p className="text-xs text-slate-500">דוגמה עם סימן מים: {String(meta.watermark)}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {event.source}
-                    {event.telegram_user_id ? ` · ${event.telegram_user_id}` : ""}
-                    {event.username ? ` · @${event.username}` : ""}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {!events.length ? <p className="text-sm text-slate-500">אין אירועים עדיין.</p> : null}
             </div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
-            <h2 className="mb-4 text-lg font-black">קודי תשלום</h2>
-            <div className="max-h-[520px] overflow-auto">
+            <h2 className="mb-4 text-lg font-black">קודי תשלום · פירוט מימוש</h2>
+            <div className="max-h-[640px] space-y-4 overflow-auto">
               {codes.map((code) => (
-                <div key={`${code.code}-${code.created_at}`} className="border-b border-slate-100 py-3 last:border-b-0">
-                  <div className="flex items-center justify-between gap-3">
+                <div key={`${code.code}-${code.created_at}`} className="rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => copyText(code.code)}
@@ -534,16 +681,22 @@ export default function AdminPanel() {
                     </button>
                     <span
                       className={`rounded-full px-2 py-1 text-xs font-bold ${
-                        code.used ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-700"
+                        code.used ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700"
                       }`}
                     >
                       {code.used ? "נוצל" : "פנוי"}
                     </span>
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">
+                  <div className="mt-2 text-xs text-slate-500">
                     נוצר: {formatDate(code.created_at)}
                     {code.redeemed_at ? ` · נוצל: ${formatDate(code.redeemed_at)}` : ""}
                   </div>
+                  {code.used && code.redemption ? (
+                    <FormSnapshotCard title="פרטי המשתמש והטופס בעת המימוש" data={code.redemption} />
+                  ) : null}
+                  {code.used && !code.redemption ? (
+                    <p className="mt-2 text-xs text-amber-700">נוצל לפני שמירת פירוט טופס — מימושים חדשים יכללו נתונים.</p>
+                  ) : null}
                 </div>
               ))}
               {!codes.length ? <p className="text-sm text-slate-500">אין קודים עדיין.</p> : null}

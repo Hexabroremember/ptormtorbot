@@ -155,13 +155,75 @@ def summary() -> dict[str, Any]:
                 """
             ).fetchall()
         ]
+        redeem_row = conn.execute(
+            """
+            SELECT
+              COUNT(*) AS total_redemptions,
+              COUNT(DISTINCT telegram_user_id) AS distinct_redeemers
+            FROM events
+            WHERE event_type = 'payment_code_redeemed'
+            """
+        ).fetchone()
+        redeem_stats = {
+            "total_redemptions": redeem_row["total_redemptions"] if redeem_row else 0,
+            "distinct_redeemers": redeem_row["distinct_redeemers"] if redeem_row else 0,
+        }
     return {
         "total_events": total_events,
         "unique_users": unique_users,
         "by_type": by_type,
         "by_day": list(reversed(by_day)),
         "recent": recent,
+        "redeem_stats": redeem_stats,
     }
+
+
+def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    """Aggregated per Telegram user for admin directory."""
+    init_db()
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    with _connect() as conn:
+        total = conn.execute(
+            "SELECT COUNT(DISTINCT telegram_user_id) AS n FROM events WHERE telegram_user_id IS NOT NULL"
+        ).fetchone()["n"]
+        rows = conn.execute(
+            """
+            SELECT
+              telegram_user_id,
+              MAX(username) AS username,
+              MAX(first_name) AS first_name,
+              COUNT(*) AS event_count,
+              MAX(ts) AS last_seen_ts,
+              SUM(CASE WHEN event_type = 'payment_code_redeemed' THEN 1 ELSE 0 END) AS redeem_count,
+              SUM(CASE WHEN event_type = 'pdf_generated' THEN 1 ELSE 0 END) AS pdf_generated_count,
+              SUM(CASE WHEN event_type = 'pdf_downloaded' THEN 1 ELSE 0 END) AS pdf_download_count,
+              SUM(CASE WHEN event_type LIKE 'bot_%' THEN 1 ELSE 0 END) AS bot_events_count
+            FROM events
+            WHERE telegram_user_id IS NOT NULL
+            GROUP BY telegram_user_id
+            ORDER BY last_seen_ts DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "telegram_user_id": row["telegram_user_id"],
+                "username": row["username"],
+                "first_name": row["first_name"],
+                "event_count": row["event_count"],
+                "last_seen_ts": row["last_seen_ts"],
+                "redeem_count": row["redeem_count"] or 0,
+                "pdf_generated_count": row["pdf_generated_count"] or 0,
+                "pdf_download_count": row["pdf_download_count"] or 0,
+                "bot_events_count": row["bot_events_count"] or 0,
+            }
+        )
+    return {"total": total, "items": items}
 
 
 def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

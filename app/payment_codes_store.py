@@ -70,14 +70,16 @@ def list_codes(*, include_code: bool = False) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for code, entry in codes.items():
             code_value = code if include_code else f"{code[:3]}…{code[-3:]}"
-            items.append(
-                {
-                    "code": code_value,
-                    "used": bool(entry.get("used")),
-                    "created_at": entry.get("created_at"),
-                    "redeemed_at": entry.get("redeemed_at"),
-                }
-            )
+            row: dict[str, Any] = {
+                "code": code_value,
+                "used": bool(entry.get("used")),
+                "created_at": entry.get("created_at"),
+                "redeemed_at": entry.get("redeemed_at"),
+            }
+            red = entry.get("redemption")
+            if isinstance(red, dict) and red:
+                row["redemption"] = red
+            items.append(row)
         items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
         return items
 
@@ -91,10 +93,12 @@ def codes_summary() -> dict[str, int]:
         return {"total": total, "used": used, "unused": total - used}
 
 
-def redeem_code(raw: str) -> tuple[bool, str]:
+def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[bool, str]:
     """
     Consume one code. Returns (success, message_key).
     message_key: 'ok' | 'not_found' | 'already_used'
+
+    ``redemption`` is persisted on the code record for admin (form snapshot + Telegram id).
     """
     code = normalize_code(raw)
     if len(code) < 8:
@@ -110,5 +114,7 @@ def redeem_code(raw: str) -> tuple[bool, str]:
             return False, "already_used"
         entry["used"] = True
         entry["redeemed_at"] = _utc_now_iso()
+        if redemption:
+            entry["redemption"] = redemption
         _atomic_write(data)
         return True, "ok"
