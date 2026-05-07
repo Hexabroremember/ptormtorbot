@@ -124,7 +124,7 @@ function computeExpirationForPdf(expiryOptionId) {
   return formatDateDdMmYyyy(d);
 }
 
-/** מילים = רצפים מופרדים ברווחים (בדיוק 2). מזהה: 8–10 ספרות בלבד (לאחר נירמול). */
+/** מילים = רצפים מופרדים ברווחים (לפחות 2). מזהה: 8–10 ספרות בלבד (לאחר נירמול). */
 function validateStep1(formData, lang) {
   const t = content[lang];
   const name = formData.fullName.trim();
@@ -135,8 +135,8 @@ function validateStep1(formData, lang) {
   }
   const wordsHe = name.split(/\s+/).filter(Boolean);
   const wordsEn = nameEn.split(/\s+/).filter(Boolean);
-  if (wordsHe.length !== 2) return t.validationFullNameTwoWords;
-  if (wordsEn.length !== 2) return t.validationEnglishTwoWords;
+  if (wordsHe.length < 2) return t.validationFullNameTwoWords;
+  if (wordsEn.length < 2) return t.validationEnglishTwoWords;
   if (!/^[A-Za-z\s'\-]+$/.test(nameEn)) return t.validationEnglishOnly;
   if (idDigits.length < 8 || idDigits.length > 10) return t.validationIdDigits;
   return null;
@@ -170,14 +170,16 @@ const content = {
       expiryPrintedHint: "תאריך שיודפס בטופס (לפי הבחירה)",
     },
     placeholders: {
-      fullName: "ישראל ישראלי",
-      fullNameEn: "ISRAEL ISRAELI",
+      fullName: "למשל: ישראל ישראלי או יוסי כהן לוי",
+      fullNameEn: "ISRAEL ISRAELI COHEN",
       idNumber: "למשל 123456789",
     },
     pickExpiryHint: "בחרו תקופה כדי לראות את התאריך שיודפס בטופס",
     validationCompleteStep1: "נא למלא את כל השדות ולבחור תקופת תוקף לפני ההמשך.",
-    validationFullNameTwoWords: "שם מלא בעברית חייב להכיל בדיוק שתי מילים (שם פרטי ושם משפחה).",
-    validationEnglishTwoWords: "השם באנגלית חייב להכיל בדיוק שתי מילים.",
+    validationFullNameTwoWords:
+      "שם מלא בעברית חייב להכיל לפחות שתי מילים (ניתן למלא שני מילים ויותר, למשל שם פרטי ושם משפחה מורכב).",
+    validationEnglishTwoWords:
+      "השם באנגלית חייב להכיל לפחות שתי מילים (ניתן למלא שני מילים ויותר).",
     validationEnglishOnly: "השם באנגלית חייב להכיל אותיות אנגלית בלבד.",
     validationIdDigits: "מספר הזהות חייב להכיל 8–10 ספרות.",
     paymentApprovalTitle: "קוד אישור תשלום",
@@ -222,14 +224,15 @@ const content = {
       expiryPrintedHint: "التاريخ في النموذج (حسب الاختيار)",
     },
     placeholders: {
-      fullName: "مثال: اسم تجريبي",
-      fullNameEn: "ISRAEL ISRAELI",
+      fullName: "مثال: اسم كامل من كلمتين أو أكثر",
+      fullNameEn: "ISRAEL ISRAELI COHEN",
       idNumber: "مثال 123456789",
     },
     pickExpiryHint: "اختر المدة لعرض التاريخ الذي سيُطبع",
     validationCompleteStep1: "يرجى تعبئة جميع الحقول واختيار مدة الصلاحية قبل المتابعة.",
-    validationFullNameTwoWords: "الاسم بالعبرية يجب أن يتكون من كلمتين بالضبط (اسم أول واسم عائلة).",
-    validationEnglishTwoWords: "الاسم بالإنجليزية يجب أن يتكون من كلمتين بالضبط.",
+    validationFullNameTwoWords:
+      "الاسم بالعبرية يجب أن يحتوي على كلمتين على الأقل (يمكن أكثر، مثل الاسم الأول واسم العائلة المركّب).",
+    validationEnglishTwoWords: "الاسم بالإنجليزية يجب أن يحتوي على كلمتين على الأقل (يمكن أكثر).",
     validationEnglishOnly: "الاسم الإنجليزي يجب أن يحتوي على أحرف إنجليزية فقط.",
     validationIdDigits: "رقم الهوية يجب أن يحتوي على 8–10 أرقام.",
     paymentApprovalTitle: "رمز تأكيد الدفع",
