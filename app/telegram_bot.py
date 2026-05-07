@@ -7,6 +7,7 @@ import os
 import re
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 import fitz
 from dotenv import load_dotenv
@@ -42,7 +43,7 @@ from app.main import (
     replace_fields,
 )
 from app.activity_store import log_event
-from app.admin_auth import admin_ids, effective_admin_secret
+from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -148,9 +149,18 @@ HELP_TELEGRAM_WEB_URL = "https://t.me/m/5jdTPOGGZWEx"
 BOT_OWNER_TELEGRAM_ID = int(os.environ.get("BOT_OWNER_TELEGRAM_ID", "5319095718"))
 
 
-def admin_mini_app_url() -> str:
+def admin_mini_app_url_for_user(telegram_user_id: int | None) -> str:
+    """Admin Web App URL. For admins, embeds tg_sess so the API trusts Telegram without initData."""
     base = normalize_https_origin(os.environ.get("WEB_APP_URL", ""))
-    return f"{base}/admin" if base else ""
+    if not base:
+        return ""
+    url = f"{base}/admin"
+    if telegram_user_id is None or telegram_user_id not in admin_ids():
+        return url
+    sess = mint_admin_tg_sess(telegram_user_id)
+    if not sess:
+        return url
+    return f"{url}?tg_sess={quote(sess, safe='')}"
 
 
 async def cmd_code(
@@ -206,7 +216,7 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
         ],
     ]
     if user_id in admin_ids():
-        admin_url = admin_mini_app_url()
+        admin_url = admin_mini_app_url_for_user(user_id)
         rows.append(
             [
                 KeyboardButton(
@@ -237,20 +247,20 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user is None or user.id not in admin_ids():
         await update.message.reply_text("⛔ אין לך הרשאה לפאנל הניהול.")
         return
-    admin_url = admin_mini_app_url()
+    admin_url = admin_mini_app_url_for_user(user.id)
     if not admin_url:
         await update.message.reply_text("WEB_APP_URL לא מוגדר, אי אפשר לפתוח את פאנל הניהול.")
         return
     secret = effective_admin_secret()
     secret_line = (
-        f"\n\n🔑 <b>קוד גישה (אם תתבקש):</b>\n<code>{secret}</code>"
+        f"\n\n🔑 <b>קוד גיבוי (דפדפן בלבד):</b>\n<code>{secret}</code>"
         if secret
-        else "\n\n⚠️ TELEGRAM_BOT_TOKEN לא מוגדר — קוד גישה לא זמין."
+        else "\n\n⚠️ TELEGRAM_BOT_TOKEN לא מוגדר — קוד גיבוי לא זמין."
     )
     await update.message.reply_text(
         f"🛡 <b>פאנל ניהול</b>{secret_line}\n\n"
-        "לחץ על הכפתור למטה לפתיחה. "
-        "אם המסך מראה שגיאת הרשאה, הדבק את קוד הגישה בשדה המתאים.",
+        "לחץ על הכפתור — הקישור מסונכרן עם טלגרם (זיהוי אוטומטי). "
+        "אם פתחת מחוץ לטלגרם, השתמש בקוד הגיבוי.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("פתח פאנל ניהול", web_app=WebAppInfo(url=admin_url))]]

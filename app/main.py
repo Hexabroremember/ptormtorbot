@@ -167,6 +167,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def admin_debug(
     request: Request,
     tg_init_data: str | None = Query(default=None),
+    tg_sess: str | None = Query(default=None),
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     authorization: str | None = Header(default=None),
 ) -> dict:
@@ -175,6 +176,7 @@ def admin_debug(
     return {
         "has_x_telegram_init_data_header": bool((x_telegram_init_data or "").strip()),
         "has_tg_init_data_query": bool((tg_init_data or "").strip()),
+        "has_tg_sess_query": bool((tg_sess or "").strip()),
         "has_authorization_header": bool(auth),
         "authorization_type": auth.split(" ")[0].lower() if auth else None,
         "bot_token_configured": bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()),

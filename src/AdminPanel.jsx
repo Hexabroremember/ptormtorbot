@@ -23,6 +23,31 @@ function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+/** Persist tg_sess from bot URL — authenticates as Telegram when initData is empty */
+function captureTgSessFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const sess = params.get("tg_sess");
+    if (sess) {
+      sessionStorage.setItem("adminTgSess", sess);
+      params.delete("tg_sess");
+      const qs = params.toString();
+      const clean = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", clean);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function storedTgSess() {
+  try {
+    return sessionStorage.getItem("adminTgSess") || "";
+  } catch {
+    return "";
+  }
+}
+
 /** Telegram often fills initData slightly after load; fetching immediately yields admin_auth_required. */
 function waitForTelegramInitData(maxMs = 15000, intervalMs = 40) {
   return new Promise((resolve) => {
@@ -70,15 +95,23 @@ function adminHeaders(secret = storedAdminSecret()) {
   return headers;
 }
 
-/** Append initData as query fallback when intermediaries drop headers on cross-origin requests */
+/** Append initData / tg_sess as query params (some clients strip headers; initData may be empty). */
 function withAdminAuthQuery(path) {
-  const initData = telegramInitData();
   let url = apiUrl(path);
-  if (!initData || url.includes("tg_init_data=")) {
+  const initData = telegramInitData();
+  const tgSess = storedTgSess();
+  const parts = [];
+  if (initData && !url.includes("tg_init_data=")) {
+    parts.push(`tg_init_data=${encodeURIComponent(initData)}`);
+  }
+  if (tgSess && !url.includes("tg_sess=")) {
+    parts.push(`tg_sess=${encodeURIComponent(tgSess)}`);
+  }
+  if (!parts.length) {
     return url;
   }
   const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}tg_init_data=${encodeURIComponent(initData)}`;
+  return `${url}${sep}${parts.join("&")}`;
 }
 
 async function adminFetch(path, options = {}) {
@@ -145,6 +178,7 @@ export default function AdminPanel() {
   const [hasInitData, setHasInitData] = useState(false);
   const [showAccessCode, setShowAccessCode] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
+  const [hasTgSess, setHasTgSess] = useState(false);
 
   const isTelegram = Boolean(
     typeof window !== "undefined" && window.Telegram?.WebApp,
@@ -179,6 +213,8 @@ export default function AdminPanel() {
     let cancelled = false;
 
     (async () => {
+      captureTgSessFromUrl();
+      setHasTgSess(Boolean(storedTgSess()));
       window.Telegram?.WebApp?.ready?.();
       window.Telegram?.WebApp?.expand?.();
 
@@ -278,8 +314,20 @@ export default function AdminPanel() {
           <section className="rounded-2xl border border-blue-400/30 bg-blue-500/10 p-4 text-sm text-blue-100">
             <div className="flex items-center gap-2 font-bold">
               <Loader2 size={18} className="animate-spin" />
-              ממתינים לאימות טלגרם (initData)…
+              ממתינים לטלגרם (initData)…
             </div>
+            <p className="mt-2 text-xs text-blue-200/80">
+              אם פתחת מכפתור &quot;ניהול&quot; או מ־/admin, הקישור כבר כולל זיהוי מסונכרן — ייטען מיד אחרי ההמתנה.
+            </p>
+          </section>
+        ) : null}
+
+        {hasTgSess && summary && !error ? (
+          <section className="rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+            <span className="font-bold">מסונכרן עם טלגרם</span>
+            <span className="mr-2 text-emerald-200/90">
+              — נכנסת דרך קישור מהבוט (זיהוי ללא הדבקה ידנית).
+            </span>
           </section>
         ) : null}
 
@@ -292,23 +340,26 @@ export default function AdminPanel() {
           >
             <span className="flex items-center gap-2">
               <AlertTriangle size={18} />
-              {hasInitData && !error ? "כניסה חלופית (קוד גישה)" : "כניסה עם קוד גישה"}
+              {hasInitData && !error ? "כניסה חלופית (קוד גיבוי)" : "כניסה עם קוד גיבוי בלבד"}
             </span>
             <span className="text-xs text-amber-200/70">{showAccessCode ? "▲ סגור" : "▼ פתח"}</span>
           </button>
 
-          {showAccessCode || !hasInitData || error === "admin_auth_required" ? (
+          {showAccessCode || (!hasInitData && !hasTgSess) || error === "admin_auth_required" ? (
             <div className="mt-3 space-y-3">
               <p className="text-sm text-amber-100/80">
-                שלח <code className="rounded bg-black/30 px-1">/admin</code> לבוט — הוא ישלח לך קוד גישה.
-                {isTelegram && !hasInitData ? " (initData לא זמין בסשן הנוכחי, קוד גישה נדרש)" : ""}
+                בתוך טלגרם: פתחו את הפאנל מכפתור &quot;ניהול&quot; בתחתית או שלחו{" "}
+                <code className="rounded bg-black/30 px-1">/admin</code> — הקישור מזהה אתכם אוטומטית.
+                {isTelegram && !hasInitData && !hasTgSess
+                  ? " אם עדיין יש שגיאה, השתמשו בקוד הגיבוי שהבוט שלח."
+                  : ""}
               </p>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                   type="text"
-                  placeholder="הדבק כאן את קוד הגישה"
+                  placeholder="קוד גיבוי (אם פותחים בדפדפן)"
                   dir="ltr"
                   className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm font-mono text-white outline-none focus:border-amber-400"
                 />
@@ -321,7 +372,7 @@ export default function AdminPanel() {
                 </button>
               </div>
               {storedAdminSecret() ? (
-                <p className="text-xs text-amber-200/60">קוד גישה נשמר בדפדפן. לניקוי — מחק ולחץ התחבר.</p>
+                <p className="text-xs text-amber-200/60">הקוד נשמר בדפדפן. לניקוי — מחק ולחץ התחבר.</p>
               ) : null}
               <div className="pt-1">
                 <button
@@ -346,7 +397,7 @@ export default function AdminPanel() {
             <div className="mb-1 font-bold">שגיאה: {error}</div>
             {error === "admin_auth_required" || error.includes("auth") ? (
               <p className="text-xs text-red-200/70">
-                שלח <code className="rounded bg-black/20 px-1">/admin</code> לבוט כדי לקבל קוד גישה, הדבק אותו למעלה ולחץ "התחבר".
+                פתחו שוב מכפתור &quot;ניהול&quot; או <code className="rounded bg-black/20 px-1">/admin</code>, או הדביקו קוד גיבוי מהבוט.
               </p>
             ) : null}
           </div>

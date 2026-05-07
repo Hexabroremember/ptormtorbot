@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -123,6 +124,52 @@ def _extract_webapp_init_data(
     return None
 
 
+# Signed URL session: bot embeds tg_sess in Web App URL so the panel authenticates as Telegram
+# when initData is empty (some clients). Bound to admin user id + expiry; HMAC with bot token.
+TG_SESS_TTL_SEC = int(os.environ.get("ADMIN_TG_SESS_TTL_SEC", str(7 * 24 * 60 * 60)))
+
+
+def _admin_tg_sess_key() -> bytes:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return b""
+    return hashlib.sha256(b"admin_tg_sess_v1:" + token.encode("utf-8")).digest()
+
+
+def mint_admin_tg_sess(telegram_user_id: int) -> str:
+    """Return URL-safe token proving this user opened /admin from our bot (until expiry)."""
+    if not _admin_tg_sess_key():
+        return ""
+    exp = int(time.time()) + max(60, TG_SESS_TTL_SEC)
+    body = f"{telegram_user_id}:{exp}"
+    digest = hmac.new(_admin_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{body}:{digest}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def verify_admin_tg_sess(token: str) -> TelegramWebAppUser | None:
+    """Validate tg_sess query param; returns user if admin and not expired."""
+    if not token or not _admin_tg_sess_key():
+        return None
+    try:
+        pad = "=" * ((4 - len(token) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(token + pad).decode("utf-8")
+        body, digest = decoded.rsplit(":", 1)
+        uid_s, exp_s = body.split(":", 1)
+        uid = int(uid_s)
+        exp = int(exp_s)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if time.time() > exp:
+        return None
+    expected = hmac.new(_admin_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, digest):
+        return None
+    if uid not in admin_ids():
+        return None
+    return TelegramWebAppUser(id=uid)
+
+
 def effective_admin_secret() -> str:
     """Return ADMIN_API_SECRET if set; otherwise derive a stable secret from the bot token.
 
@@ -144,6 +191,7 @@ def require_admin(
     authorization: str | None = Header(default=None),
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     tg_init_data: str | None = Query(default=None, description="Fallback when proxies strip custom headers"),
+    tg_sess: str | None = Query(default=None, description="HMAC session from bot Web App URL when initData missing"),
 ) -> AdminIdentity:
     init_data = _extract_webapp_init_data(
         request=request,
@@ -156,6 +204,12 @@ def require_admin(
         if user.id in admin_ids():
             return AdminIdentity(auth_method="telegram", telegram_user=user)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_only")
+
+    sess_raw = (tg_sess or "").strip()
+    if sess_raw:
+        sess_user = verify_admin_tg_sess(unquote(sess_raw))
+        if sess_user:
+            return AdminIdentity(auth_method="telegram_sess", telegram_user=sess_user)
 
     secret = effective_admin_secret()
     if secret and authorization == f"Bearer {secret}":
