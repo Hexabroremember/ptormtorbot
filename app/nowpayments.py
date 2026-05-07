@@ -13,7 +13,16 @@ NOWPAYMENTS_BASE = "https://api.nowpayments.io/v1"
 
 
 def _api_key() -> str:
-    return os.environ.get("NOWPAYMENTS_API_KEY", "").strip()
+    """Read API key from env. Checks common alternate names (dashboard typos)."""
+    for name in (
+        "NOWPAYMENTS_API_KEY",
+        "NOW_PAYMENTS_API_KEY",
+        "NOWPAYMENTS_KEY",
+    ):
+        v = os.environ.get(name, "").strip()
+        if v:
+            return v
+    return ""
 
 
 def _ipn_secret() -> str:
@@ -33,7 +42,11 @@ async def create_invoice(
     """Create a NOWPayments invoice; returns the full API response (includes invoice_url)."""
     key = _api_key()
     if not key:
-        raise ValueError("NOWPAYMENTS_API_KEY is not configured")
+        raise ValueError(
+            "NOWPayments API key missing: set NOWPAYMENTS_API_KEY on the **same** "
+            "service that runs the API (e.g. Railway → your web service → Variables), "
+            "then redeploy. Frontend-only env vars are not visible to the backend."
+        )
 
     payload = {
         "price_amount": price_amount,
