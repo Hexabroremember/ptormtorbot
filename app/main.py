@@ -8,13 +8,16 @@ from pathlib import Path
 import fitz
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
+from app.activity_store import list_events, log_event, summary as activity_summary
+from app.admin_auth import AdminIdentity, parse_optional_telegram_user, require_admin
+from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
 from app.payment_codes_store import redeem_code
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
 
@@ -84,6 +87,10 @@ class RedeemPaymentCodeRequest(BaseModel):
     code: str = Field(..., min_length=4, max_length=64)
 
 
+class MaintenanceModeRequest(BaseModel):
+    enabled: bool
+
+
 def _index_html_response() -> HTMLResponse:
     """Serve built React SPA when ``dist/index.html`` exists (Docker/Render); else dev ``index.html``."""
     dist_index = DIST_DIR / "index.html"
@@ -114,9 +121,33 @@ app.add_middleware(
     expose_headers=["X-Pdf-Download-Path"],
 )
 
+
+def _telegram_user_from_header(init_data: str | None):
+    return parse_optional_telegram_user(init_data)
+
+
+def _request_meta(request: Request, *, watermark: bool | None = None) -> dict[str, str | bool | None]:
+    ua = request.headers.get("user-agent", "")
+    return {
+        "watermark": watermark,
+        "client": "telegram" if request.headers.get("x-telegram-init-data") else "web",
+        "user_agent": ua[:120] if ua else None,
+    }
+
+
 # Register before /static mount so /static/index.html is HTML, not a mis-typed static file.
 @app.get("/")
 def index() -> HTMLResponse:
+    return _index_html_response()
+
+
+@app.get("/admin")
+def admin_index() -> HTMLResponse:
+    return _index_html_response()
+
+
+@app.get("/admin/{path:path}")
+def admin_index_path(path: str) -> HTMLResponse:
     return _index_html_response()
 
 
@@ -132,19 +163,110 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.get("/api/admin/summary")
+def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
+    from app.payment_codes_store import codes_summary
+
+    return {
+        "activity": activity_summary(),
+        "payment_codes": codes_summary(),
+        "control": get_control_state(),
+    }
+
+
+@app.get("/api/admin/events")
+def admin_events(
+    _: AdminIdentity = Depends(require_admin),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    event_type: str | None = Query(default=None),
+    telegram_user_id: int | None = Query(default=None),
+) -> dict:
+    return list_events(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        telegram_user_id=telegram_user_id,
+    )
+
+
+@app.get("/api/admin/payment-codes")
+def admin_payment_codes(_: AdminIdentity = Depends(require_admin)) -> dict:
+    from app.payment_codes_store import list_codes
+
+    return {"items": list_codes(include_code=True)}
+
+
+@app.post("/api/admin/codes/issue")
+def admin_issue_payment_code(_: AdminIdentity = Depends(require_admin)) -> dict[str, str]:
+    from app.payment_codes_store import issue_new_code
+
+    code = issue_new_code()
+    log_event("payment_code_issued", source="admin")
+    return {"code": code}
+
+
+@app.get("/api/admin/control")
+def admin_control(_: AdminIdentity = Depends(require_admin)) -> dict:
+    return get_control_state()
+
+
+@app.post("/api/admin/maintenance")
+def admin_maintenance(payload: MaintenanceModeRequest, _: AdminIdentity = Depends(require_admin)) -> dict:
+    state = set_maintenance_mode(payload.enabled)
+    log_event("maintenance_changed", source="admin", meta={"enabled": payload.enabled})
+    return state
+
+
 @app.post("/redeem-payment-code")
-def redeem_payment_code(payload: RedeemPaymentCodeRequest) -> dict[str, bool | str]:
+def redeem_payment_code(
+    payload: RedeemPaymentCodeRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> dict[str, bool | str]:
     """Validate and consume a one-time code issued via the Telegram bot."""
+    tg_user = _telegram_user_from_header(x_telegram_init_data)
     ok, key = redeem_code(payload.code)
     if ok:
+        log_event(
+            "payment_code_redeemed",
+            source="mini_app",
+            telegram_user_id=tg_user.id if tg_user else None,
+            username=tg_user.username if tg_user else None,
+            first_name=tg_user.first_name if tg_user else None,
+            meta=_request_meta(request),
+        )
         return {"ok": True}
     if key == "already_used":
+        log_event(
+            "payment_code_redeem_failed",
+            source="mini_app",
+            telegram_user_id=tg_user.id if tg_user else None,
+            username=tg_user.username if tg_user else None,
+            first_name=tg_user.first_name if tg_user else None,
+            meta={**_request_meta(request), "reason": "already_used"},
+        )
         raise HTTPException(status_code=400, detail="code_already_used")
+    log_event(
+        "payment_code_redeem_failed",
+        source="mini_app",
+        telegram_user_id=tg_user.id if tg_user else None,
+        username=tg_user.username if tg_user else None,
+        first_name=tg_user.first_name if tg_user else None,
+        meta={**_request_meta(request), "reason": "invalid"},
+    )
     raise HTTPException(status_code=400, detail="invalid_code")
 
 
 @app.post("/generate-pdf")
-def generate_pdf(payload: GeneratePdfRequest) -> Response:
+def generate_pdf(
+    payload: GeneratePdfRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+) -> Response:
+    if maintenance_mode_enabled():
+        raise HTTPException(status_code=503, detail="maintenance_mode")
+    tg_user = _telegram_user_from_header(x_telegram_init_data)
     try:
         pdf_bytes = replace_fields(
             hebrew_full_name=payload.hebrew_full_name.strip(),
@@ -166,15 +288,24 @@ def generate_pdf(payload: GeneratePdfRequest) -> Response:
         # Mini App / Telegram WebView often blocks blob: downloads — clients can open this HTTPS path instead.
         "X-Pdf-Download-Path": f"/pdf-download/{dl_token}",
     }
+    log_event(
+        "pdf_generated",
+        source="mini_app" if tg_user else "api",
+        telegram_user_id=tg_user.id if tg_user else None,
+        username=tg_user.username if tg_user else None,
+        first_name=tg_user.first_name if tg_user else None,
+        meta=_request_meta(request, watermark=payload.watermark),
+    )
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 @app.get("/pdf-download/{token}")
-def download_pdf_by_token(token: str) -> Response:
+def download_pdf_by_token(token: str, request: Request) -> Response:
     """HTTPS download URL for the same bytes as ``POST /generate-pdf`` (Telegram-friendly)."""
     data = get_pdf_bytes(token)
     if data is None:
         raise HTTPException(status_code=404, detail="download_expired_or_invalid")
+    log_event("pdf_downloaded", source="mini_app", meta=_request_meta(request))
     return Response(
         content=data,
         media_type="application/pdf",

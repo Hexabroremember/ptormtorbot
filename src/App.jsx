@@ -84,6 +84,19 @@ async function renderPdfBlobToPreviewImageUrl(pdfBlob) {
 
 const TELEGRAM_CHANNEL_URL = "https://t.me/BituhLeumi";
 
+export function telegramInitData() {
+  return window.Telegram?.WebApp?.initData || "";
+}
+
+export function jsonHeaders(extra = {}) {
+  const initData = telegramInitData();
+  return {
+    "Content-Type": "application/json",
+    ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
+    ...extra,
+  };
+}
+
 function TelegramIcon({ className, size = 22 }) {
   return (
     <svg
@@ -353,7 +366,7 @@ const App = () => {
         const idDigits = formData.idNumber.replace(/\D/g, "");
         const res = await fetch(buildPdfApiUrl(), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: jsonHeaders(),
           body: JSON.stringify({
             hebrew_full_name: formData.fullName.trim(),
             english_full_name: formData.fullNameEn.trim().toUpperCase(),
@@ -457,7 +470,7 @@ const App = () => {
     try {
       const res = await fetch(buildRedeemApiUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({ code: trimmed }),
       });
       if (res.ok) {
@@ -490,7 +503,7 @@ const App = () => {
       const idDigits = formData.idNumber.replace(/\D/g, "");
       const res = await fetch(buildPdfApiUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: jsonHeaders(),
         body: JSON.stringify({
           hebrew_full_name: formData.fullName.trim(),
           english_full_name: formData.fullNameEn.trim().toUpperCase(),

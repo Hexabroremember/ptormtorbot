@@ -41,6 +41,8 @@ from app.main import (
     GeneratePdfRequest,
     replace_fields,
 )
+from app.activity_store import log_event
+from app.admin_auth import admin_ids
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -142,8 +144,13 @@ BTN_ISSUE_FORM = "📋 הנפקת פטור מתור"
 BTN_HELP = "עזרה"
 HELP_TELEGRAM_WEB_URL = "https://t.me/m/5jdTPOGGZWEx"
 
-# בעל הבוט — רק הוא יכול להנפיק קודי תשלום (פקודה /code).
-BOT_OWNER_TELEGRAM_ID = 5319095718
+# בעל הבוט — רק מנהלים יכולים להנפיק קודי תשלום (פקודה /code).
+BOT_OWNER_TELEGRAM_ID = int(os.environ.get("BOT_OWNER_TELEGRAM_ID", "5319095718"))
+
+
+def admin_mini_app_url() -> str:
+    base = normalize_https_origin(os.environ.get("WEB_APP_URL", ""))
+    return f"{base}/admin" if base else ""
 
 
 async def cmd_code(
@@ -153,13 +160,20 @@ async def cmd_code(
     if update.message is None:
         return
     user = update.effective_user
-    if user is None or user.id != BOT_OWNER_TELEGRAM_ID:
+    if user is None or user.id not in admin_ids():
         await update.message.reply_text("⛔ אין לך הרשאה לפקודה הזו.")
         return
     try:
         from app.payment_codes_store import issue_new_code
 
         code = issue_new_code()
+        log_event(
+            "payment_code_issued",
+            source="telegram_bot",
+            telegram_user_id=user.id,
+            username=user.username,
+            first_name=user.first_name,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("issue payment code failed")
         await update.message.reply_text(f"❌ שגיאה ביצירת קוד: {exc}")
@@ -175,25 +189,63 @@ async def cmd_code(
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
     """Bottom reply keyboard: Mini App + help (text opens link via handler) + /form."""
+    return web_app_reply_keyboard_for_user(None)
+
+
+def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup | None:
+    """Bottom reply keyboard: public Mini App; admin Mini App only for admins."""
     mini = mini_app_entry_url()
     if not mini:
         return None
-    return ReplyKeyboardMarkup(
+    rows = [
         [
+            KeyboardButton(
+                BTN_ISSUE_FORM,
+                web_app=WebAppInfo(url=mini),
+            ),
+        ],
+    ]
+    if user_id in admin_ids():
+        admin_url = admin_mini_app_url()
+        rows.append(
             [
                 KeyboardButton(
-                    BTN_ISSUE_FORM,
-                    web_app=WebAppInfo(url=mini),
+                    "ניהול",
+                    web_app=WebAppInfo(url=admin_url),
                 ),
-            ],
-            [
-                KeyboardButton(BTN_HELP),
-                KeyboardButton("/form"),
-            ],
-        ],
+            ]
+        )
+    rows.append(
+        [
+            KeyboardButton(BTN_HELP),
+            KeyboardButton("/form"),
+        ]
+    )
+    return ReplyKeyboardMarkup(
+        rows,
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder="לחצו למטה לטופס או הקלידו כאן…",
+    )
+
+
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner/admin only: send a Web App button to the admin panel."""
+    if update.message is None:
+        return
+    user = update.effective_user
+    if user is None or user.id not in admin_ids():
+        await update.message.reply_text("⛔ אין לך הרשאה לפאנל הניהול.")
+        return
+    admin_url = admin_mini_app_url()
+    if not admin_url:
+        await update.message.reply_text("WEB_APP_URL לא מוגדר, אי אפשר לפתוח את פאנל הניהול.")
+        return
+    await update.message.reply_text(
+        "פאנל ניהול",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("פתח פאנל ניהול", web_app=WebAppInfo(url=admin_url))]]
+        ),
     )
 
 
@@ -225,9 +277,17 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Public entry: Mini App when WEB_APP_URL is set; otherwise same as chat form."""
     if update.message is None:
         return ConversationHandler.END
+    user = update.effective_user
+    log_event(
+        "bot_start",
+        source="telegram_bot",
+        telegram_user_id=user.id if user else None,
+        username=user.username if user else None,
+        first_name=user.first_name if user else None,
+    )
     if mini_app_entry_url():
         context.user_data.clear()
-        kb = web_app_reply_keyboard()
+        kb = web_app_reply_keyboard_for_user(user.id if user else None)
         await update.message.reply_text(
             MSG_WEB_APP_START,
             parse_mode="HTML",
@@ -240,7 +300,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Multi-step chat form — /form, restart button, or /start when no Web App URL."""
     context.user_data.clear()
-    bottom_kb = web_app_reply_keyboard()
+    user = update.effective_user
+    log_event(
+        "bot_form_started",
+        source="telegram_bot",
+        telegram_user_id=user.id if user else None,
+        username=user.username if user else None,
+        first_name=user.first_name if user else None,
+    )
+    bottom_kb = web_app_reply_keyboard_for_user(user.id if user else None)
     chat_rm = bottom_kb or ReplyKeyboardRemove()
     if update.callback_query is not None:
         q = update.callback_query
@@ -303,7 +371,8 @@ async def exp_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
         MSG_WORKING,
         parse_mode="HTML",
-        reply_markup=web_app_reply_keyboard() or ReplyKeyboardRemove(),
+        reply_markup=web_app_reply_keyboard_for_user(update.effective_user.id if update.effective_user else None)
+        or ReplyKeyboardRemove(),
     )
     return await deliver_generated_pdf(update, context)
 
@@ -396,7 +465,15 @@ async def deliver_generated_pdf(
         parse_mode="HTML",
         reply_markup=again_kb,
     )
-    reopen_kb = web_app_reply_keyboard()
+    user = update.effective_user
+    log_event(
+        "bot_pdf_delivered",
+        source="telegram_bot",
+        telegram_user_id=user.id if user else None,
+        username=user.username if user else None,
+        first_name=user.first_name if user else None,
+    )
+    reopen_kb = web_app_reply_keyboard_for_user(user.id if user else None)
     if reopen_kb:
         await context.bot.send_message(
             chat_id=chat.id,
@@ -409,7 +486,8 @@ async def deliver_generated_pdf(
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message:
-        kb = web_app_reply_keyboard()
+        user = update.effective_user
+        kb = web_app_reply_keyboard_for_user(user.id if user else None)
         await update.message.reply_text(
             MSG_CANCEL,
             reply_markup=kb if kb else ReplyKeyboardRemove(),
@@ -420,7 +498,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        kb = web_app_reply_keyboard()
+        user = update.effective_user
+        kb = web_app_reply_keyboard_for_user(user.id if user else None)
         await update.message.reply_text(
             MSG_HELP,
             parse_mode="HTML",
@@ -501,6 +580,7 @@ def _run_polling_with_token(token: str) -> None:
                 BotCommand("start", "פתיחת טופס (אפליקציה / צ'אט)"),
                 BotCommand("form", "מילוי הטופס בצ'אט, שלב אחר שלב"),
                 BotCommand("code", "קוד תשלום חד פעמי (בעלים)"),
+                BotCommand("admin", "פאנל ניהול (מנהלים בלבד)"),
                 BotCommand("help", "עזרה והסבר קצר"),
                 BotCommand("cancel", "ביטול מילוי בצ'אט"),
             ]
@@ -519,6 +599,7 @@ def _run_polling_with_token(token: str) -> None:
 
     application = Application.builder().token(token).post_init(post_init).build()
     application.add_handler(CommandHandler("code", cmd_code))
+    application.add_handler(CommandHandler("admin", cmd_admin))
     application.add_handler(CommandHandler("help", help_command))
     conv = ConversationHandler(
         entry_points=[
