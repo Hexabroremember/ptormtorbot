@@ -179,15 +179,20 @@ def summary() -> dict[str, Any]:
 
 
 def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
-    """Aggregated per Telegram user for admin directory."""
+    """Aggregated per Telegram user for admin directory.
+
+    Merges two sources:
+    1. events table (users that sent Telegram initData with any request)
+    2. payment_codes table redemption JSON (users identified at code-redemption time,
+       even if initData was missing so they never appear in the events table directly)
+    """
     init_db()
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
+
+    # ---- source 1: events-based aggregation ---------------------------------
     with _connect() as conn:
-        total = conn.execute(
-            "SELECT COUNT(DISTINCT telegram_user_id) AS n FROM events WHERE telegram_user_id IS NOT NULL"
-        ).fetchone()["n"]
-        rows = conn.execute(
+        ev_rows = conn.execute(
             """
             SELECT
               telegram_user_id,
@@ -203,27 +208,77 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
             WHERE telegram_user_id IS NOT NULL
             GROUP BY telegram_user_id
             ORDER BY last_seen_ts DESC
-            LIMIT ? OFFSET ?
             """,
-            (limit, offset),
         ).fetchall()
 
-    items = []
-    for row in rows:
-        items.append(
-            {
-                "telegram_user_id": row["telegram_user_id"],
-                "username": row["username"],
-                "first_name": row["first_name"],
-                "event_count": row["event_count"],
-                "last_seen_ts": row["last_seen_ts"],
-                "redeem_count": row["redeem_count"] or 0,
-                "pdf_generated_count": row["pdf_generated_count"] or 0,
-                "pdf_download_count": row["pdf_download_count"] or 0,
-                "bot_events_count": row["bot_events_count"] or 0,
+        # ---- source 2: payment_codes redemption JSON ------------------------
+        code_rows: list[sqlite3.Row] = []
+        try:
+            code_rows = conn.execute(
+                "SELECT entry_json FROM payment_codes"
+            ).fetchall()
+        except Exception:  # noqa: BLE001 — table may not exist yet
+            pass
+
+    # Build merged dict keyed by telegram_user_id
+    merged: dict[int, dict[str, Any]] = {}
+    for row in ev_rows:
+        uid = row["telegram_user_id"]
+        merged[uid] = {
+            "telegram_user_id": uid,
+            "username": row["username"],
+            "first_name": row["first_name"],
+            "event_count": row["event_count"],
+            "last_seen_ts": row["last_seen_ts"],
+            "redeem_count": int(row["redeem_count"] or 0),
+            "pdf_generated_count": int(row["pdf_generated_count"] or 0),
+            "pdf_download_count": int(row["pdf_download_count"] or 0),
+            "bot_events_count": int(row["bot_events_count"] or 0),
+        }
+
+    # Supplement with users found only in payment_codes redemption data
+    for code_row in code_rows:
+        try:
+            entry = json.loads(code_row["entry_json"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(entry, dict) or not entry.get("used"):
+            continue
+        red = entry.get("redemption")
+        if not isinstance(red, dict):
+            continue
+        uid_raw = red.get("telegram_user_id")
+        if uid_raw is None:
+            continue
+        try:
+            uid = int(uid_raw)
+        except (ValueError, TypeError):
+            continue
+        if uid in merged:
+            # already captured via events — just ensure redeem_count >= 1
+            if merged[uid]["redeem_count"] == 0:
+                merged[uid]["redeem_count"] = 1
+            continue
+        # user not in events at all — add a synthetic row from redemption data
+        redeemed_at = entry.get("redeemed_at") or entry.get("created_at") or ""
+        existing = merged.get(uid)
+        if existing is None:
+            merged[uid] = {
+                "telegram_user_id": uid,
+                "username": red.get("username"),
+                "first_name": red.get("first_name"),
+                "event_count": 0,
+                "last_seen_ts": redeemed_at,
+                "redeem_count": 1,
+                "pdf_generated_count": 0,
+                "pdf_download_count": 0,
+                "bot_events_count": 0,
+                "from_code_only": True,
             }
-        )
-    return {"total": total, "items": items}
+
+    items = sorted(merged.values(), key=lambda r: r.get("last_seen_ts") or "", reverse=True)
+    total = len(items)
+    return {"total": total, "items": items[offset : offset + limit]}
 
 
 def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:

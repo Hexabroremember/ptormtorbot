@@ -586,10 +586,23 @@ export default function AdminPanel() {
                 {users.map((u) => (
                   <tr key={u.telegram_user_id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-mono text-xs ltr">{u.telegram_user_id}</td>
-                    <td className="px-3 py-2">{u.first_name || "—"}</td>
+                    <td className="px-3 py-2">
+                      <span>{u.first_name || "—"}</span>
+                      {u.from_code_only ? (
+                        <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                          קוד בלבד
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs ltr">{u.username ? `@${u.username}` : "—"}</td>
                     <td className="px-3 py-2">{u.event_count}</td>
-                    <td className="px-3 py-2">{u.redeem_count}</td>
+                    <td className="px-3 py-2">
+                      {u.redeem_count > 0 ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
+                          {u.redeem_count}
+                        </span>
+                      ) : "0"}
+                    </td>
                     <td className="px-3 py-2">{u.pdf_generated_count}</td>
                     <td className="px-3 py-2">{u.pdf_download_count}</td>
                     <td className="px-3 py-2">{u.bot_events_count}</td>
@@ -813,10 +826,19 @@ export default function AdminPanel() {
                             </span>
                           ) : null}
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {event.source}
-                          {event.telegram_user_id ? ` · ${event.telegram_user_id}` : ""}
-                          {event.username ? ` · @${event.username}` : ""}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                          <span>{event.source}</span>
+                          {event.first_name ? (
+                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-700">
+                              {event.first_name}
+                            </span>
+                          ) : null}
+                          {event.username ? (
+                            <span className="font-mono text-blue-600">@{event.username}</span>
+                          ) : null}
+                          {event.telegram_user_id ? (
+                            <span className="font-mono text-slate-400">{event.telegram_user_id}</span>
+                          ) : null}
                         </div>
                       </span>
                       <span className="flex shrink-0 items-center gap-1 text-xs text-slate-500">
