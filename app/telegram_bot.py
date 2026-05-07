@@ -112,12 +112,10 @@ MSG_CANCEL = "בוטל. שלחו /start כדי להתחיל מחדש."
 MSG_HELP = (
     "<b>📋 פטור מתור — עזרה</b>\n\n"
     "<b>כפתורים למטה</b> — \"📋 הנפקת פטור מתור\" פותח את המיני אפליקציה בתוך טלגרם; "
-    "\"עזרה\" פותח את מסך העזרה; "
-    "\"/form\" מתחיל מילוי בצ'אט.\n"
+    "\"עזרה\" פותח את מסך העזרה.\n"
     "ליד שדה ההקלדה יופיע גם כפתור תפריט <b>📋 טופס PDF</b> (אם הוגדר).\n\n"
     "<b>/start</b> — פתיחה מחדש והסבר\n"
-    "<b>/form</b> — ממלאים את אותם שדות בשיחה, שלב אחר שלב\n"
-    "<b>/cancel</b> — עצירה באמצע מילוי בצ'אט\n\n"
+    "<b>/cancel</b> — עצירה באמצע מילוי בצ'אט (כשמשתמשים במצב צ'אט ללא מיני אפ)\n\n"
     "<b>/code</b> — בעל הבוט בלבד: הנפקת קוד אישור תשלום חד פעמי ללקוח.\n\n"
     "יש למלא ארבעה שדות: שם בעברית ובאנגלית, מספר זהות ותאריך תפוגה.\n"
     "בסוף נשלחות שתי תמונות ללא כיתוב (ראשונה מקורית ללא סימן מים, שנייה דחוסה עם סימן מים), "
@@ -130,8 +128,7 @@ MSG_WEB_APP_START = (
     "לטופס המלא עם תצוגה חיה — לחצו על <b>הכפתורים למטה</b> או על כפתור התפריט "
     "ליד שדה ההקלדה (📋 טופס PDF). המיני אפ נפתח בתוך טלגרם.\n\n"
     "שם מלא בעברית ובאנגלית, מספר זהות, תאריך תפוגה וסימן מים — בקשה אחת, "
-    "תצוגה מקדימה והורדת PDF.\n\n"
-    "<b>למלא בשיחה צעד־אחר־צעד:</b> לחצו על <code>/form</code> בשורת הכפתורים או שלחו את הפקודה כאן."
+    "תצוגה מקדימה והורדת PDF."
 )
 MSG_ERR_VALID = "נתונים לא תקינים — בדקו את השדות ונסו שוב."
 MSG_ERR_GEN = "לא הצלחנו ליצור את הקובץ. נסו שוב או פנו למנהל המערכת."
@@ -198,7 +195,7 @@ async def cmd_code(
 
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
-    """Bottom reply keyboard: Mini App + help (text opens link via handler) + /form."""
+    """Bottom reply keyboard: Mini App + help (text opens link via handler)."""
     return web_app_reply_keyboard_for_user(None)
 
 
@@ -225,12 +222,7 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
                 ),
             ]
         )
-    rows.append(
-        [
-            KeyboardButton(BTN_HELP),
-            KeyboardButton("/form"),
-        ]
-    )
+    rows.append([KeyboardButton(BTN_HELP)])
     return ReplyKeyboardMarkup(
         rows,
         resize_keyboard=True,
@@ -317,7 +309,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Multi-step chat form — /form, restart button, or /start when no Web App URL."""
+    """Multi-step chat form — restart button, or /start when no Web App URL."""
     context.user_data.clear()
     user = update.effective_user
     log_event(
@@ -596,8 +588,7 @@ def _run_polling_with_token(token: str) -> None:
         await application.bot.delete_webhook(drop_pending_updates=True)
         await application.bot.set_my_commands(
             [
-                BotCommand("start", "פתיחת טופס (אפליקציה / צ'אט)"),
-                BotCommand("form", "מילוי הטופס בצ'אט, שלב אחר שלב"),
+                BotCommand("start", "פתיחת טופס (מיני אפ / צ'אט אם אין קישור)"),
                 BotCommand("code", "קוד תשלום חד פעמי (בעלים)"),
                 BotCommand("admin", "פאנל ניהול (מנהלים בלבד)"),
                 BotCommand("help", "עזרה והסבר קצר"),
@@ -623,7 +614,6 @@ def _run_polling_with_token(token: str) -> None:
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", cmd_start),
-            CommandHandler("form", begin_chat_flow),
             CallbackQueryHandler(begin_chat_flow, pattern=r"^restart$"),
         ],
         states={
@@ -647,7 +637,6 @@ def _run_polling_with_token(token: str) -> None:
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", cmd_start),
-            CommandHandler("form", begin_chat_flow),
             CallbackQueryHandler(begin_chat_flow, pattern=r"^restart$"),
         ],
     )
