@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from app.activity_store import list_events, log_event, summary as activity_summary
-from app.admin_auth import AdminIdentity, parse_optional_telegram_user, require_admin
+from app.admin_auth import AdminIdentity, effective_admin_secret, parse_optional_telegram_user, require_admin
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
 from app.payment_codes_store import redeem_code
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
@@ -161,6 +161,26 @@ if DIST_ASSETS_DIR.is_dir():
 
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/api/admin/debug")
+def admin_debug(
+    request: Request,
+    tg_init_data: str | None = Query(default=None),
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """No-auth diagnostic: shows what auth data the server actually received."""
+    auth = (authorization or "").strip()
+    return {
+        "has_x_telegram_init_data_header": bool((x_telegram_init_data or "").strip()),
+        "has_tg_init_data_query": bool((tg_init_data or "").strip()),
+        "has_authorization_header": bool(auth),
+        "authorization_type": auth.split(" ")[0].lower() if auth else None,
+        "bot_token_configured": bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()),
+        "admin_secret_source": "explicit" if os.environ.get("ADMIN_API_SECRET", "").strip() else ("derived" if os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() else "none"),
+        "admin_secret_configured": bool(effective_admin_secret()),
+    }
 
 
 @app.get("/api/admin/summary")

@@ -42,7 +42,7 @@ from app.main import (
     replace_fields,
 )
 from app.activity_store import log_event
-from app.admin_auth import admin_ids
+from app.admin_auth import admin_ids, effective_admin_secret
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -230,7 +230,7 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Owner/admin only: send a Web App button to the admin panel."""
+    """Owner/admin only: send a Web App button to the admin panel + the access code."""
     if update.message is None:
         return
     user = update.effective_user
@@ -241,8 +241,17 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not admin_url:
         await update.message.reply_text("WEB_APP_URL לא מוגדר, אי אפשר לפתוח את פאנל הניהול.")
         return
+    secret = effective_admin_secret()
+    secret_line = (
+        f"\n\n🔑 <b>קוד גישה (אם תתבקש):</b>\n<code>{secret}</code>"
+        if secret
+        else "\n\n⚠️ TELEGRAM_BOT_TOKEN לא מוגדר — קוד גישה לא זמין."
+    )
     await update.message.reply_text(
-        "פאנל ניהול",
+        f"🛡 <b>פאנל ניהול</b>{secret_line}\n\n"
+        "לחץ על הכפתור למטה לפתיחה. "
+        "אם המסך מראה שגיאת הרשאה, הדבק את קוד הגישה בשדה המתאים.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("פתח פאנל ניהול", web_app=WebAppInfo(url=admin_url))]]
         ),

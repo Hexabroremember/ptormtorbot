@@ -123,6 +123,22 @@ def _extract_webapp_init_data(
     return None
 
 
+def effective_admin_secret() -> str:
+    """Return ADMIN_API_SECRET if set; otherwise derive a stable secret from the bot token.
+
+    This ensures there is always a working fallback secret even when the env var
+    is not explicitly configured — the derived secret is deterministic and safe
+    as long as TELEGRAM_BOT_TOKEN itself is kept private.
+    """
+    explicit = os.environ.get("ADMIN_API_SECRET", "").strip()
+    if explicit:
+        return explicit
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if token:
+        return hashlib.sha256(f"admin_panel_secret:{token}".encode("utf-8")).hexdigest()[:32]
+    return ""
+
+
 def require_admin(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -141,7 +157,7 @@ def require_admin(
             return AdminIdentity(auth_method="telegram", telegram_user=user)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_only")
 
-    secret = os.environ.get("ADMIN_API_SECRET", "").strip()
+    secret = effective_admin_secret()
     if secret and authorization == f"Bearer {secret}":
         return AdminIdentity(auth_method="api_key")
 

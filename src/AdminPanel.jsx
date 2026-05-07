@@ -143,6 +143,8 @@ export default function AdminPanel() {
   const [busy, setBusy] = useState(false);
   const [tgWaiting, setTgWaiting] = useState(false);
   const [hasInitData, setHasInitData] = useState(false);
+  const [showAccessCode, setShowAccessCode] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null);
 
   const isTelegram = Boolean(
     typeof window !== "undefined" && window.Telegram?.WebApp,
@@ -197,6 +199,16 @@ export default function AdminPanel() {
       cancelled = true;
     };
   }, []);
+
+  const fetchDebug = async () => {
+    try {
+      const res = await fetch(apiUrl("/api/admin/debug"));
+      const data = await res.json();
+      setDebugInfo(data);
+    } catch (e) {
+      setDebugInfo({ error: String(e) });
+    }
+  };
 
   const saveSecret = () => {
     window.localStorage.setItem("adminApiSecret", secret.trim());
@@ -271,39 +283,72 @@ export default function AdminPanel() {
           </section>
         ) : null}
 
-        {!isTelegram || (!tgWaiting && !hasInitData) ? (
-          <section className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
-            <div className="mb-3 flex items-center gap-2 font-bold text-amber-200">
+        {/* Access code section — always available */}
+        <section className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 font-bold text-amber-200"
+            onClick={() => setShowAccessCode((v) => !v)}
+          >
+            <span className="flex items-center gap-2">
               <AlertTriangle size={18} />
-              {!isTelegram ? "פתיחה מחוץ לטלגרם" : "אימות חלופי"}
+              {hasInitData && !error ? "כניסה חלופית (קוד גישה)" : "כניסה עם קוד גישה"}
+            </span>
+            <span className="text-xs text-amber-200/70">{showAccessCode ? "▲ סגור" : "▼ פתח"}</span>
+          </button>
+
+          {showAccessCode || !hasInitData || error === "admin_auth_required" ? (
+            <div className="mt-3 space-y-3">
+              <p className="text-sm text-amber-100/80">
+                שלח <code className="rounded bg-black/30 px-1">/admin</code> לבוט — הוא ישלח לך קוד גישה.
+                {isTelegram && !hasInitData ? " (initData לא זמין בסשן הנוכחי, קוד גישה נדרש)" : ""}
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  type="text"
+                  placeholder="הדבק כאן את קוד הגישה"
+                  dir="ltr"
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm font-mono text-white outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={saveSecret}
+                  className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950"
+                >
+                  התחבר
+                </button>
+              </div>
+              {storedAdminSecret() ? (
+                <p className="text-xs text-amber-200/60">קוד גישה נשמר בדפדפן. לניקוי — מחק ולחץ התחבר.</p>
+              ) : null}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={fetchDebug}
+                  className="text-xs text-amber-300/60 underline"
+                >
+                  הצג מידע דיאגנוסטי
+                </button>
+                {debugInfo ? (
+                  <pre className="mt-2 max-h-36 overflow-auto rounded-lg bg-black/30 p-2 text-xs text-amber-100/80 ltr">
+                    {JSON.stringify(debugInfo, null, 2)}
+                  </pre>
+                ) : null}
+              </div>
             </div>
-            <p className="mb-3 text-sm text-amber-100/80">
-              {!isTelegram
-                ? "אם פתחת בדפדפן, הזן ADMIN_API_SECRET. בתוך טלגרם ההזדהות מתבצעת אוטומטית לאחר טעינת initData."
-                : "אם initData לא נטען, אפשר להזין ADMIN_API_SECRET (כמו בדפדפן)."}
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                type="password"
-                placeholder="ADMIN_API_SECRET"
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-400"
-              />
-              <button
-                type="button"
-                onClick={saveSecret}
-                className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950"
-              >
-                שמור והתחבר
-              </button>
-            </div>
-          </section>
-        ) : null}
+          ) : null}
+        </section>
 
         {error ? (
           <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-100">
-            {error}
+            <div className="mb-1 font-bold">שגיאה: {error}</div>
+            {error === "admin_auth_required" || error.includes("auth") ? (
+              <p className="text-xs text-red-200/70">
+                שלח <code className="rounded bg-black/20 px-1">/admin</code> לבוט כדי לקבל קוד גישה, הדבק אותו למעלה ולחץ "התחבר".
+              </p>
+            ) : null}
           </div>
         ) : null}
 
