@@ -9,9 +9,9 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Query, Request, status
 
 
 @dataclass(frozen=True)
@@ -101,12 +101,40 @@ def parse_optional_telegram_user(init_data: str | None) -> TelegramWebAppUser | 
         return None
 
 
+def _extract_webapp_init_data(
+    *,
+    request: Request,
+    authorization: str | None,
+    x_telegram_init_data: str | None,
+    tg_init_data: str | None,
+) -> str | None:
+    """Collect initData from headers, query, or Telegram-style Authorization: TMA <data>."""
+    raw = (
+        (x_telegram_init_data or "").strip()
+        or request.headers.get("x-telegram-init-data", "").strip()
+        or request.headers.get("X-Telegram-Init-Data", "").strip()
+        or (tg_init_data or "").strip()
+    )
+    if raw:
+        return unquote(raw)
+    auth = (authorization or "").strip()
+    if auth.lower().startswith("tma "):
+        return auth[4:].strip()
+    return None
+
+
 def require_admin(
     request: Request,
     authorization: str | None = Header(default=None),
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    tg_init_data: str | None = Query(default=None, description="Fallback when proxies strip custom headers"),
 ) -> AdminIdentity:
-    init_data = (x_telegram_init_data or "").strip() or request.headers.get("x-telegram-init-data", "").strip()
+    init_data = _extract_webapp_init_data(
+        request=request,
+        authorization=authorization,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data=tg_init_data,
+    )
     if init_data:
         user = verify_telegram_init_data(init_data)
         if user.id in admin_ids():

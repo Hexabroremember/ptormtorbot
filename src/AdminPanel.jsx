@@ -24,18 +24,30 @@ function telegramInitData() {
 }
 
 /** Telegram often fills initData slightly after load; fetching immediately yields admin_auth_required. */
-function waitForTelegramInitData(maxMs = 8000, intervalMs = 40) {
+function waitForTelegramInitData(maxMs = 15000, intervalMs = 40) {
   return new Promise((resolve) => {
     const start = Date.now();
-    const tick = () => {
+    let done = false;
+    let intervalId = 0;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      window.clearInterval(intervalId);
+      resolve(value);
+    };
+    const check = () => {
       const d = telegramInitData();
-      if (d || Date.now() - start >= maxMs) {
-        resolve(d);
+      if (d) {
+        finish(d);
         return;
       }
-      window.setTimeout(tick, intervalMs);
+      if (Date.now() - start >= maxMs) {
+        finish("");
+      }
     };
-    tick();
+    intervalId = window.setInterval(check, intervalMs);
+    check();
+    window.Telegram?.WebApp?.onEvent?.("viewport_changed", check);
   });
 }
 
@@ -45,15 +57,32 @@ function storedAdminSecret() {
 
 function adminHeaders(secret = storedAdminSecret()) {
   const initData = telegramInitData();
-  return {
+  const headers = {
     "Content-Type": "application/json",
-    ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
-    ...(!initData && secret ? { Authorization: `Bearer ${secret}` } : {}),
   };
+  if (initData) {
+    headers["X-Telegram-Init-Data"] = initData;
+    /* Telegram Web Apps: some proxies strip custom headers; Authorization TMA is widely forwarded */
+    headers.Authorization = `TMA ${initData}`;
+  } else if (secret.trim()) {
+    headers.Authorization = `Bearer ${secret.trim()}`;
+  }
+  return headers;
+}
+
+/** Append initData as query fallback when intermediaries drop headers on cross-origin requests */
+function withAdminAuthQuery(path) {
+  const initData = telegramInitData();
+  let url = apiUrl(path);
+  if (!initData || url.includes("tg_init_data=")) {
+    return url;
+  }
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}tg_init_data=${encodeURIComponent(initData)}`;
 }
 
 async function adminFetch(path, options = {}) {
-  const res = await fetch(apiUrl(path), {
+  const res = await fetch(withAdminAuthQuery(path), {
     ...options,
     headers: {
       ...adminHeaders(),
