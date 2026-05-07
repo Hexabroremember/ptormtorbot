@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
 
 @dataclass(frozen=True)
@@ -102,11 +102,13 @@ def parse_optional_telegram_user(init_data: str | None) -> TelegramWebAppUser | 
 
 
 def require_admin(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
 ) -> AdminIdentity:
-    if x_telegram_init_data:
-        user = verify_telegram_init_data(x_telegram_init_data)
+    init_data = (x_telegram_init_data or "").strip() or request.headers.get("x-telegram-init-data", "").strip()
+    if init_data:
+        user = verify_telegram_init_data(init_data)
         if user.id in admin_ids():
             return AdminIdentity(auth_method="telegram", telegram_user=user)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_only")

@@ -23,6 +23,22 @@ function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+/** Telegram often fills initData slightly after load; fetching immediately yields admin_auth_required. */
+function waitForTelegramInitData(maxMs = 8000, intervalMs = 40) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tick = () => {
+      const d = telegramInitData();
+      if (d || Date.now() - start >= maxMs) {
+        resolve(d);
+        return;
+      }
+      window.setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+
 function storedAdminSecret() {
   return window.localStorage.getItem("adminApiSecret") || "";
 }
@@ -96,8 +112,12 @@ export default function AdminPanel() {
   const [error, setError] = useState("");
   const [newCode, setNewCode] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tgWaiting, setTgWaiting] = useState(false);
+  const [hasInitData, setHasInitData] = useState(false);
 
-  const isTelegram = Boolean(telegramInitData());
+  const isTelegram = Boolean(
+    typeof window !== "undefined" && window.Telegram?.WebApp,
+  );
   const maintenanceEnabled = Boolean(summary?.control?.maintenance_mode);
 
   const topTypes = useMemo(
@@ -125,9 +145,28 @@ export default function AdminPanel() {
   };
 
   useEffect(() => {
-    window.Telegram?.WebApp?.ready?.();
-    window.Telegram?.WebApp?.expand?.();
-    load();
+    let cancelled = false;
+
+    (async () => {
+      window.Telegram?.WebApp?.ready?.();
+      window.Telegram?.WebApp?.expand?.();
+
+      if (window.Telegram?.WebApp) {
+        setTgWaiting(true);
+        await waitForTelegramInitData();
+        if (cancelled) return;
+        setTgWaiting(false);
+        setHasInitData(Boolean(telegramInitData()));
+      } else {
+        setHasInitData(false);
+      }
+
+      await load();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const saveSecret = () => {
@@ -194,14 +233,25 @@ export default function AdminPanel() {
           </button>
         </header>
 
-        {!isTelegram ? (
+        {tgWaiting ? (
+          <section className="rounded-2xl border border-blue-400/30 bg-blue-500/10 p-4 text-sm text-blue-100">
+            <div className="flex items-center gap-2 font-bold">
+              <Loader2 size={18} className="animate-spin" />
+              ממתינים לאימות טלגרם (initData)…
+            </div>
+          </section>
+        ) : null}
+
+        {!isTelegram || (!tgWaiting && !hasInitData) ? (
           <section className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
             <div className="mb-3 flex items-center gap-2 font-bold text-amber-200">
               <AlertTriangle size={18} />
-              פתיחה מחוץ לטלגרם
+              {!isTelegram ? "פתיחה מחוץ לטלגרם" : "אימות חלופי"}
             </div>
             <p className="mb-3 text-sm text-amber-100/80">
-              אם פתחת בדפדפן, הזן ADMIN_API_SECRET. בתוך טלגרם ההזדהות מתבצעת אוטומטית.
+              {!isTelegram
+                ? "אם פתחת בדפדפן, הזן ADMIN_API_SECRET. בתוך טלגרם ההזדהות מתבצעת אוטומטית לאחר טעינת initData."
+                : "אם initData לא נטען, אפשר להזין ADMIN_API_SECRET (כמו בדפדפן)."}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
