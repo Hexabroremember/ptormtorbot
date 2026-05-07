@@ -23,9 +23,8 @@ from app.activity_store import list_events, list_user_directory, log_event, summ
 from app.admin_auth import (
     AdminIdentity,
     effective_admin_secret,
-    extract_webapp_init_data,
-    parse_optional_telegram_user,
     require_admin,
+    resolve_telegram_webapp_user,
 )
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
 from app.crypto_orders import create_order, get_order, list_orders, mark_paid, mark_pdf_sent
@@ -201,14 +200,13 @@ def _telegram_user_from_webapp_request(
     authorization: str | None = None,
 ):
     auth = authorization or request.headers.get("Authorization") or request.headers.get("authorization")
-    raw = extract_webapp_init_data(
+    return resolve_telegram_webapp_user(
         request,
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data_query,
         body_init_data=body_init_data,
         authorization=auth,
     )
-    return parse_optional_telegram_user(raw)
 
 
 def _request_meta(request: Request, *, watermark: bool | None = None) -> dict[str, str | bool | None]:
@@ -649,6 +647,17 @@ def redeem_payment_code(
         if tg_user and not telegram_pdf_sent:
             try:
                 pdf_bytes = _pdf_from_form_snapshot(payload.form)
+                if pdf_bytes is None and redemption:
+                    pdf_bytes = _pdf_from_form_snapshot(redemption)
+                if pdf_bytes is None:
+                    log_event(
+                        "telegram_pdf_skipped_no_form_data",
+                        source="mini_app",
+                        telegram_user_id=tg_user.id,
+                        username=tg_user.username,
+                        first_name=tg_user.first_name,
+                        meta={"code_last4": code_hint},
+                    )
                 if _send_final_pdf_to_telegram(
                     chat_id=tg_user.id,
                     pdf_bytes=pdf_bytes,

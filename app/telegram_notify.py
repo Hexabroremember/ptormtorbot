@@ -7,6 +7,19 @@ import os
 import httpx
 
 
+def _telegram_api_err(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            desc = data.get("description")
+            err_code = data.get("error_code")
+            if desc:
+                return f"{desc}" + (f" ({err_code})" if err_code is not None else "")
+    except Exception:
+        pass
+    return resp.text[:400]
+
+
 def _bot_token() -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
@@ -23,7 +36,7 @@ def send_telegram_message(chat_id: int | str | None, text: str) -> tuple[bool, s
             )
             if resp.is_success:
                 return True, None
-            return False, resp.text[:300]
+            return False, _telegram_api_err(resp)
     except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
         return False, str(exc)
 
@@ -56,6 +69,6 @@ def send_telegram_document(
             )
             if resp.is_success:
                 return True, None
-            return False, resp.text[:300]
+            return False, _telegram_api_err(resp)
     except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
         return False, str(exc)

@@ -102,6 +102,51 @@ def parse_optional_telegram_user(init_data: str | None) -> TelegramWebAppUser | 
         return None
 
 
+def resolve_telegram_webapp_user(
+    request: Request,
+    *,
+    x_telegram_init_data: str | None = None,
+    tg_init_data_query: str | None = None,
+    body_init_data: str | None = None,
+    authorization: str | None = None,
+) -> TelegramWebAppUser | None:
+    """Verify Mini App user from initData, trying several sources.
+
+    Order matters: JSON body ``telegram_init_data`` is checked first when present.
+    Some proxies and hosts strip ``X-Telegram-Init-Data`` but the POST body survives,
+    which would otherwise leave chat_id unresolved while PDF generation still works.
+    """
+    auth_hdr = (
+        (authorization or "").strip()
+        or (request.headers.get("Authorization") or request.headers.get("authorization") or "").strip()
+    )
+    candidates: list[str] = []
+
+    def add(raw: str | None) -> None:
+        s = (raw or "").strip()
+        if not s:
+            return
+        candidates.append(unquote(s))
+
+    add(body_init_data)
+    add(x_telegram_init_data)
+    add(request.headers.get("x-telegram-init-data"))
+    add(request.headers.get("X-Telegram-Init-Data"))
+    add(tg_init_data_query)
+    if auth_hdr.lower().startswith("tma "):
+        add(auth_hdr[4:])
+
+    seen: set[str] = set()
+    for raw in candidates:
+        if raw in seen:
+            continue
+        seen.add(raw)
+        user = parse_optional_telegram_user(raw)
+        if user:
+            return user
+    return None
+
+
 def _extract_webapp_init_data(
     *,
     request: Request,
