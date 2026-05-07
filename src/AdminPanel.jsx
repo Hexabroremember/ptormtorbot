@@ -234,6 +234,14 @@ export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [detailEventId, setDetailEventId] = useState(null);
+  const [limitOverrides, setLimitOverrides] = useState([]);
+  const [overrideForm, setOverrideForm] = useState({
+    telegram_user_id: "",
+    expires_at: "",
+    bypass: true,
+    multiplier: "2",
+    notes: "",
+  });
 
   const isTelegram = Boolean(
     typeof window !== "undefined" && window.Telegram?.WebApp,
@@ -252,17 +260,19 @@ export default function AdminPanel() {
     setLoading(true);
     setError("");
     try {
-      const [summaryData, eventsData, codesData, usersData] = await Promise.all([
+      const [summaryData, eventsData, codesData, usersData, overridesData] = await Promise.all([
         adminFetch("/api/admin/summary"),
         adminFetch("/api/admin/events?limit=120"),
         adminFetch("/api/admin/payment-codes"),
         adminFetch("/api/admin/users?limit=200"),
+        adminFetch("/api/admin/rate-limit-overrides"),
       ]);
       setSummary(summaryData);
       setEvents(eventsData.items || []);
       setCodes(codesData.items || []);
       setUsers(usersData.items || []);
       setUsersTotal(usersData.total ?? 0);
+      setLimitOverrides(overridesData.items || []);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -333,6 +343,55 @@ export default function AdminPanel() {
       await adminFetch("/api/admin/maintenance", {
         method: "POST",
         body: JSON.stringify({ enabled: !maintenanceEnabled }),
+      });
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveOverride = async () => {
+    const userId = Number(overrideForm.telegram_user_id);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      setError("נא להזין מזהה טלגרם תקין");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await adminFetch("/api/admin/rate-limit-overrides", {
+        method: "POST",
+        body: JSON.stringify({
+          telegram_user_id: userId,
+          expires_at: overrideForm.expires_at || null,
+          bypass: Boolean(overrideForm.bypass),
+          multiplier: Number(overrideForm.multiplier) || 2,
+          notes: overrideForm.notes.trim() || null,
+        }),
+      });
+      setOverrideForm({
+        telegram_user_id: "",
+        expires_at: "",
+        bypass: true,
+        multiplier: "2",
+        notes: "",
+      });
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteOverride = async (telegramUserId) => {
+    setBusy(true);
+    setError("");
+    try {
+      await adminFetch(`/api/admin/rate-limit-overrides/${telegramUserId}`, {
+        method: "DELETE",
       });
       await load();
     } catch (e) {
@@ -613,6 +672,106 @@ export default function AdminPanel() {
               </button>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-black">
+              <ShieldCheck size={20} />
+              הרשאות מעבר למגבלות
+            </h2>
+            <p className="text-xs text-slate-500">
+              בעלים ומנהלים עוברים מגבלות אוטומטית. כאן אפשר לפתוח משתמש רגיל.
+            </p>
+          </div>
+          <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 md:grid-cols-5">
+            <input
+              value={overrideForm.telegram_user_id}
+              onChange={(e) => setOverrideForm((p) => ({ ...p, telegram_user_id: e.target.value }))}
+              placeholder="מזהה טלגרם"
+              dir="ltr"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-blue-400"
+            />
+            <input
+              type="datetime-local"
+              value={overrideForm.expires_at}
+              onChange={(e) => setOverrideForm((p) => ({ ...p, expires_at: e.target.value }))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+              title="תוקף ההרשאה (ריק = ללא תוקף)"
+            />
+            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold">
+              <input
+                type="checkbox"
+                checked={overrideForm.bypass}
+                onChange={(e) => setOverrideForm((p) => ({ ...p, bypass: e.target.checked }))}
+              />
+              ללא מגבלה
+            </label>
+            <input
+              value={overrideForm.multiplier}
+              onChange={(e) => setOverrideForm((p) => ({ ...p, multiplier: e.target.value }))}
+              type="number"
+              min="1"
+              step="0.5"
+              placeholder="מכפיל"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+              disabled={overrideForm.bypass}
+            />
+            <button
+              type="button"
+              onClick={saveOverride}
+              disabled={busy}
+              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-60"
+            >
+              שמור הרשאה
+            </button>
+            <input
+              value={overrideForm.notes}
+              onChange={(e) => setOverrideForm((p) => ({ ...p, notes: e.target.value }))}
+              placeholder="הערה למנהל (אופציונלי)"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 md:col-span-5"
+            />
+          </div>
+          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-100">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead className="bg-slate-50 text-right text-xs font-bold text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">מזהה טלגרם</th>
+                  <th className="px-3 py-2">מצב</th>
+                  <th className="px-3 py-2">מכפיל</th>
+                  <th className="px-3 py-2">תוקף</th>
+                  <th className="px-3 py-2">הערה</th>
+                  <th className="px-3 py-2">פעולה</th>
+                </tr>
+              </thead>
+              <tbody>
+                {limitOverrides.map((row) => (
+                  <tr key={row.telegram_user_id} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-mono text-xs ltr">{row.telegram_user_id}</td>
+                    <td className="px-3 py-2">
+                      {Number(row.bypass) ? "ללא מגבלה" : "מוגדל"}
+                    </td>
+                    <td className="px-3 py-2">{row.multiplier}</td>
+                    <td className="px-3 py-2 text-xs">{row.expires_at ? formatDate(row.expires_at) : "ללא תוקף"}</td>
+                    <td className="px-3 py-2 text-xs">{row.notes || "—"}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => deleteOverride(row.telegram_user_id)}
+                        disabled={busy}
+                        className="rounded-lg bg-red-50 px-3 py-1 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                      >
+                        הסר
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!limitOverrides.length ? (
+            <p className="mt-3 text-sm text-slate-500">אין הרשאות מיוחדות כרגע.</p>
+          ) : null}
         </section>
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">

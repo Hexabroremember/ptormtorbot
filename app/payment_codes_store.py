@@ -47,7 +47,7 @@ def normalize_code(raw: str) -> str:
     return "".join(raw.split()).upper()
 
 
-def issue_new_code() -> str:
+def issue_new_code(*, meta: dict[str, Any] | None = None) -> str:
     """Generate and persist a new unused code; retries on collision."""
     with _lock:
         for _ in range(50):
@@ -56,7 +56,10 @@ def issue_new_code() -> str:
             codes = data.setdefault("codes", {})
             if code in codes:
                 continue
-            codes[code] = {"used": False, "created_at": _utc_now_iso()}
+            entry: dict[str, Any] = {"used": False, "created_at": _utc_now_iso()}
+            if meta:
+                entry.update(meta)
+            codes[code] = entry
             _atomic_write(data)
             return code
     raise RuntimeError("Could not allocate unique payment code")
@@ -75,6 +78,10 @@ def list_codes(*, include_code: bool = False) -> list[dict[str, Any]]:
                 "used": bool(entry.get("used")),
                 "created_at": entry.get("created_at"),
                 "redeemed_at": entry.get("redeemed_at"),
+                "source": entry.get("source"),
+                "order_id": entry.get("order_id"),
+                "telegram_pdf_sent": bool(entry.get("telegram_pdf_sent")),
+                "telegram_pdf_sent_at": entry.get("telegram_pdf_sent_at"),
             }
             red = entry.get("redemption")
             if isinstance(red, dict) and red:
@@ -118,3 +125,22 @@ def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[
             entry["redemption"] = redemption
         _atomic_write(data)
         return True, "ok"
+
+
+def get_code_entry(raw: str) -> dict[str, Any] | None:
+    code = normalize_code(raw)
+    with _lock:
+        entry = _load_raw().setdefault("codes", {}).get(code)
+        return dict(entry) if isinstance(entry, dict) else None
+
+
+def mark_code_telegram_pdf_sent(raw: str) -> None:
+    code = normalize_code(raw)
+    with _lock:
+        data = _load_raw()
+        entry = data.setdefault("codes", {}).get(code)
+        if not isinstance(entry, dict):
+            return
+        entry["telegram_pdf_sent"] = True
+        entry["telegram_pdf_sent_at"] = _utc_now_iso()
+        _atomic_write(data)

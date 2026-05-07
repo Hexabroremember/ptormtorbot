@@ -42,12 +42,24 @@ def init_orders_table() -> None:
                 invoice_url TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 payment_code TEXT,
+                form_json TEXT,
+                pdf_sent_to_telegram INTEGER NOT NULL DEFAULT 0,
                 ipn_payload TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        existing = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(crypto_orders)").fetchall()
+        }
+        if "form_json" not in existing:
+            conn.execute("ALTER TABLE crypto_orders ADD COLUMN form_json TEXT")
+        if "pdf_sent_to_telegram" not in existing:
+            conn.execute(
+                "ALTER TABLE crypto_orders ADD COLUMN pdf_sent_to_telegram INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_crypto_orders_tg ON crypto_orders(telegram_user_id)"
         )
@@ -62,6 +74,7 @@ def create_order(
     price_ils: float,
     expiry_option: str | None,
     invoice_url: str,
+    form: dict[str, Any] | None = None,
 ) -> None:
     init_orders_table()
     now = _utc_now()
@@ -71,8 +84,8 @@ def create_order(
             INSERT OR REPLACE INTO crypto_orders
                 (order_id, telegram_user_id, username, first_name,
                  price_ils, expiry_option, invoice_url,
-                 status, payment_code, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+                 status, payment_code, form_json, pdf_sent_to_telegram, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, 0, ?, ?)
             """,
             (
                 order_id,
@@ -82,6 +95,7 @@ def create_order(
                 price_ils,
                 expiry_option,
                 invoice_url,
+                json.dumps(form, ensure_ascii=False) if form else None,
                 now,
                 now,
             ),
@@ -112,7 +126,28 @@ def get_order(order_id: str) -> dict[str, Any] | None:
         ).fetchone()
     if row is None:
         return None
-    return dict(row)
+    out = dict(row)
+    form_raw = out.get("form_json")
+    if isinstance(form_raw, str) and form_raw:
+        try:
+            out["form"] = json.loads(form_raw)
+        except json.JSONDecodeError:
+            out["form"] = None
+    return out
+
+
+def mark_pdf_sent(order_id: str) -> None:
+    init_orders_table()
+    now = _utc_now()
+    with _lock, _connect() as conn:
+        conn.execute(
+            """
+            UPDATE crypto_orders
+            SET pdf_sent_to_telegram = 1, updated_at = ?
+            WHERE order_id = ?
+            """,
+            (now, order_id),
+        )
 
 
 def list_orders(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:

@@ -347,6 +347,9 @@ const App = () => {
       try {
         const err = await res.json();
         if (typeof err.detail === "string") return err.detail;
+        if (err.detail?.code === "rate_limited") {
+          return "יותר מדי פעולות בזמן קצר. נסו שוב עוד כמה דקות.";
+        }
         if (Array.isArray(err.detail)) {
           return err.detail
             .map((d) => (typeof d === "string" ? d : d.msg || JSON.stringify(d)))
@@ -463,6 +466,13 @@ const App = () => {
             telegram_user_id: tgUser?.id ?? null,
             username: tgUser?.username ?? null,
             first_name: tgUser?.first_name ?? null,
+            form: {
+              hebrew_full_name: formData.fullName.trim(),
+              english_full_name: formData.fullNameEn.trim().toUpperCase(),
+              id_number: formData.idNumber.replace(/\D/g, ""),
+              expiration_date: computeExpirationForPdf(formData.expiryOption),
+              expiry_option: formData.expiryOption,
+            },
           }),
         });
         if (!res.ok) {
@@ -507,6 +517,9 @@ const App = () => {
       const err = await res.json();
       const d = err.detail;
       if (typeof d === "string") return d;
+      if (d?.code === "rate_limited") {
+        return "יותר מדי פעולות בזמן קצר. נסו שוב עוד כמה דקות.";
+      }
       if (Array.isArray(d)) {
         return d.map((x) => (typeof x === "string" ? x : x.msg || JSON.stringify(x))).join(" ");
       }

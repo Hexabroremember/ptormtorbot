@@ -34,3 +34,11 @@ services:
         sync: false
       - key: NOWPAYMENTS_IPN_SECRET
         sync: false
+      - key: RATE_PREVIEW_PER_HOUR
+        sync: false
+      - key: RATE_FINAL_PER_DAY
+        sync: false
+      - key: RATE_INVOICE_PER_HOUR
+        sync: false
+      - key: RATE_REDEEM_PER_HOUR
+        sync: false

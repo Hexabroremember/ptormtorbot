@@ -22,10 +22,18 @@ from pydantic import BaseModel, Field
 from app.activity_store import list_events, list_user_directory, log_event, summary as activity_summary
 from app.admin_auth import AdminIdentity, effective_admin_secret, parse_optional_telegram_user, require_admin
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
-from app.crypto_orders import create_order, get_order, list_orders, mark_paid
+from app.crypto_orders import create_order, get_order, list_orders, mark_paid, mark_pdf_sent
 from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
-from app.payment_codes_store import issue_new_code, normalize_code, redeem_code
+from app.payment_codes_store import (
+    get_code_entry,
+    issue_new_code,
+    mark_code_telegram_pdf_sent,
+    normalize_code,
+    redeem_code,
+)
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
+from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
+from app.telegram_notify import send_telegram_document, send_telegram_message
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -112,6 +120,15 @@ class CreateCryptoInvoiceRequest(BaseModel):
     telegram_user_id: int | None = None
     username: str | None = Field(default=None, max_length=64)
     first_name: str | None = Field(default=None, max_length=64)
+    form: RedeemFormSnapshot | None = None
+
+
+class RateLimitOverrideRequest(BaseModel):
+    telegram_user_id: int
+    expires_at: str | None = Field(default=None, max_length=48)
+    bypass: bool = True
+    multiplier: float = Field(default=2.0, ge=1.0, le=100.0)
+    notes: str | None = Field(default=None, max_length=240)
 
 
 def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dict[str, Any]:
@@ -294,19 +311,89 @@ def admin_maintenance(payload: MaintenanceModeRequest, _: AdminIdentity = Depend
     return state
 
 
-async def _send_telegram_message(chat_id: int, text: str) -> None:
-    """Fire-and-forget: send a message via Telegram Bot API HTTP (no polling process needed)."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    if not token or not chat_id:
-        return
-    try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            await client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            )
-    except Exception:
-        pass  # never fail the main request because of notification
+@app.get("/api/admin/rate-limit-overrides")
+def admin_rate_limit_overrides(_: AdminIdentity = Depends(require_admin)) -> dict:
+    return list_overrides()
+
+
+@app.post("/api/admin/rate-limit-overrides")
+def admin_upsert_rate_limit_override(
+    payload: RateLimitOverrideRequest,
+    _: AdminIdentity = Depends(require_admin),
+) -> dict:
+    row = upsert_override(
+        telegram_user_id=payload.telegram_user_id,
+        expires_at=payload.expires_at,
+        bypass=payload.bypass,
+        multiplier=payload.multiplier,
+        notes=payload.notes,
+    )
+    log_event(
+        "rate_limit_override_saved",
+        source="admin",
+        telegram_user_id=payload.telegram_user_id,
+        meta=row,
+    )
+    return row
+
+
+@app.delete("/api/admin/rate-limit-overrides/{telegram_user_id}")
+def admin_delete_rate_limit_override(
+    telegram_user_id: int,
+    _: AdminIdentity = Depends(require_admin),
+) -> dict[str, bool]:
+    out = delete_override(telegram_user_id)
+    log_event(
+        "rate_limit_override_deleted",
+        source="admin",
+        telegram_user_id=telegram_user_id,
+    )
+    return out
+
+
+def _pdf_from_form_snapshot(form: RedeemFormSnapshot | dict[str, Any] | None) -> bytes | None:
+    if form is None:
+        return None
+    raw = form if isinstance(form, dict) else form.model_dump(exclude_none=True)
+    required = ("hebrew_full_name", "english_full_name", "id_number", "expiration_date")
+    if any(not str(raw.get(k, "")).strip() for k in required):
+        return None
+    return replace_fields(
+        hebrew_full_name=str(raw["hebrew_full_name"]).strip(),
+        english_full_name=str(raw["english_full_name"]).strip(),
+        id_number=str(raw["id_number"]).strip(),
+        expiration_date=str(raw["expiration_date"]).strip(),
+        watermark=False,
+    )
+
+
+def _send_final_pdf_to_telegram(
+    *,
+    chat_id: int | None,
+    pdf_bytes: bytes | None,
+    event_source: str,
+    telegram_user_id: int | None,
+    username: str | None,
+    first_name: str | None,
+    meta: dict[str, Any],
+) -> bool:
+    if not chat_id or not pdf_bytes:
+        return False
+    ok, err = send_telegram_document(
+        chat_id,
+        pdf_bytes,
+        filename=OUTPUT_PDF_FILENAME,
+        caption="הקובץ הסופי נשמר כאן בצ׳אט כדי שלא יאבד.",
+    )
+    log_event(
+        "telegram_final_pdf_sent" if ok else "telegram_delivery_failed",
+        source=event_source,
+        telegram_user_id=telegram_user_id,
+        username=username,
+        first_name=first_name,
+        meta={**meta, **({} if ok else {"error": err})},
+    )
+    return ok
 
 
 @app.post("/api/crypto/create-invoice")
@@ -318,11 +405,13 @@ async def crypto_create_invoice(payload: CreateCryptoInvoiceRequest, request: Re
 
     order_id = str(uuid.uuid4())
     tg_user = _telegram_user_from_header(request.headers.get("x-telegram-init-data"))
+    check_rate_limit("create_invoice", request, tg_user)
 
     # Prefer init-data user over payload (init-data is server-verified)
     real_user_id = (tg_user.id if tg_user else None) or payload.telegram_user_id
     real_username = (tg_user.username if tg_user else None) or payload.username
     real_first_name = (tg_user.first_name if tg_user else None) or payload.first_name
+    form_snapshot = _build_redemption_dict(tg_user, payload.form)
 
     description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(payload.price_ils)}"
 
@@ -355,6 +444,7 @@ async def crypto_create_invoice(payload: CreateCryptoInvoiceRequest, request: Re
         price_ils=payload.price_ils,
         expiry_option=payload.expiry_option,
         invoice_url=invoice_url,
+        form=form_snapshot or None,
     )
     log_event(
         "crypto_invoice_created",
@@ -362,7 +452,12 @@ async def crypto_create_invoice(payload: CreateCryptoInvoiceRequest, request: Re
         telegram_user_id=real_user_id,
         username=real_username,
         first_name=real_first_name,
-        meta={"order_id": order_id, "price_ils": payload.price_ils, "expiry_option": payload.expiry_option},
+        meta={
+            "order_id": order_id,
+            "price_ils": payload.price_ils,
+            "expiry_option": payload.expiry_option,
+            "form": form_snapshot,
+        },
     )
     return {"order_id": order_id, "invoice_url": invoice_url}
 
@@ -407,9 +502,11 @@ async def crypto_ipn(request: Request) -> JSONResponse:
     order = get_order(order_id)
     if order is None:
         return JSONResponse({"ok": True, "ignored": True, "reason": "order_not_found"})
+    if order.get("status") == "paid":
+        return JSONResponse({"ok": True, "updated": False, "reason": "already_paid"})
 
     # Issue a one-time payment code for this order
-    code = issue_new_code()
+    code = issue_new_code(meta={"source": "crypto", "order_id": order_id})
     updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
 
     log_event(
@@ -429,11 +526,39 @@ async def crypto_ipn(request: Request) -> JSONResponse:
     # Notify the user via Telegram if we know their chat id
     tg_user_id = order.get("telegram_user_id")
     if tg_user_id and updated:
-        await _send_telegram_message(
+        pdf_sent = False
+        try:
+            pdf_bytes = _pdf_from_form_snapshot(order.get("form"))
+            pdf_sent = _send_final_pdf_to_telegram(
+                chat_id=tg_user_id,
+                pdf_bytes=pdf_bytes,
+                event_source="nowpayments_ipn",
+                telegram_user_id=tg_user_id,
+                username=order.get("username"),
+                first_name=order.get("first_name"),
+                meta={"order_id": order_id, "reason": "crypto_payment_confirmed"},
+            )
+            if pdf_sent:
+                mark_pdf_sent(order_id)
+                mark_code_telegram_pdf_sent(code)
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "telegram_delivery_failed",
+                source="nowpayments_ipn",
+                telegram_user_id=tg_user_id,
+                username=order.get("username"),
+                first_name=order.get("first_name"),
+                meta={"order_id": order_id, "error": str(exc)},
+            )
+        send_telegram_message(
             tg_user_id,
-            f"✅ <b>תשלום הקריפטו אושר!</b>\n\n"
+            f"✅ <b>התשלום התקבל ואושר!</b>\n\n"
             f"קוד האישור שלך: <code>{code}</code>\n\n"
-            "חזור לאפליקציה, הזן את הקוד בשדה אישור התשלום וקבל את הקובץ.",
+            + (
+                "שלחנו גם את הקובץ הסופי כאן בצ׳אט."
+                if pdf_sent
+                else "חזור לאפליקציה, הזן את הקוד בשדה אישור התשלום וקבל את הקובץ."
+            ),
         )
 
     return JSONResponse({"ok": True, "updated": updated})
@@ -456,18 +581,59 @@ def redeem_payment_code(
 ) -> dict[str, bool | str]:
     """Validate and consume a one-time code issued via the Telegram bot."""
     tg_user = _telegram_user_from_header(x_telegram_init_data)
+    check_rate_limit("redeem", request, tg_user)
     redemption = _build_redemption_dict(tg_user, payload.form)
     ok, key = redeem_code(payload.code, redemption=redemption or None)
     norm = normalize_code(payload.code)
     code_hint = norm[-4:].upper() if len(norm) >= 4 else None
     if ok:
+        code_entry = get_code_entry(norm) or {}
+        telegram_pdf_sent = bool(code_entry.get("telegram_pdf_sent"))
+        if tg_user and not telegram_pdf_sent:
+            try:
+                pdf_bytes = _pdf_from_form_snapshot(payload.form)
+                if _send_final_pdf_to_telegram(
+                    chat_id=tg_user.id,
+                    pdf_bytes=pdf_bytes,
+                    event_source="mini_app",
+                    telegram_user_id=tg_user.id,
+                    username=tg_user.username,
+                    first_name=tg_user.first_name,
+                    meta={"code_last4": code_hint, "reason": "payment_code_redeemed"},
+                ):
+                    mark_code_telegram_pdf_sent(norm)
+                    telegram_pdf_sent = True
+            except Exception as exc:  # noqa: BLE001
+                log_event(
+                    "telegram_delivery_failed",
+                    source="mini_app",
+                    telegram_user_id=tg_user.id,
+                    username=tg_user.username,
+                    first_name=tg_user.first_name,
+                    meta={"code_last4": code_hint, "error": str(exc)},
+                )
+        if tg_user:
+            send_telegram_message(
+                tg_user.id,
+                "✅ <b>התשלום אושר.</b>\n"
+                + (
+                    "שלחנו גם עותק של הקובץ הסופי כאן בצ׳אט."
+                    if telegram_pdf_sent
+                    else "אפשר להוריד את הקובץ הסופי באפליקציה."
+                ),
+            )
         log_event(
             "payment_code_redeemed",
             source="mini_app",
             telegram_user_id=tg_user.id if tg_user else None,
             username=tg_user.username if tg_user else None,
             first_name=tg_user.first_name if tg_user else None,
-            meta={**_request_meta(request), "code_last4": code_hint, "redemption": redemption},
+            meta={
+                **_request_meta(request),
+                "code_last4": code_hint,
+                "redemption": redemption,
+                "telegram_pdf_sent": telegram_pdf_sent,
+            },
         )
         return {"ok": True}
     if key == "already_used":
@@ -500,6 +666,7 @@ def generate_pdf(
     if maintenance_mode_enabled():
         raise HTTPException(status_code=503, detail="maintenance_mode")
     tg_user = _telegram_user_from_header(x_telegram_init_data)
+    check_rate_limit("preview_pdf" if payload.watermark else "final_pdf", request, tg_user)
     try:
         pdf_bytes = replace_fields(
             hebrew_full_name=payload.hebrew_full_name.strip(),
