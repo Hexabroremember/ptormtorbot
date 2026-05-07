@@ -754,7 +754,9 @@ def generate_pdf(
         body_init_data=None,
         authorization=authorization,
     )
-    check_rate_limit("preview_pdf" if payload.watermark else "final_pdf", request, tg_user)
+    # Only rate-limit preview (watermark=True) requests; final downloads are gated by single-use code.
+    if payload.watermark:
+        check_rate_limit("preview_pdf", request, tg_user)
     try:
         pdf_bytes = replace_fields(
             hebrew_full_name=payload.hebrew_full_name.strip(),
