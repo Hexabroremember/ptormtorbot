@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
-DB_PATH = DATA_DIR / "events.sqlite3"
+from app.storage_connection import connect_storage, qp, use_postgres
 
 _lock = threading.Lock()
 
@@ -21,34 +16,42 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
 def init_db() -> None:
-    with _lock, _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ts TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                source TEXT NOT NULL,
-                telegram_user_id INTEGER,
-                username TEXT,
-                first_name TEXT,
-                meta_json TEXT NOT NULL DEFAULT '{}'
+    with _lock, connect_storage() as conn:
+        if use_postgres():
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id BIGSERIAL PRIMARY KEY,
+                    ts TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    telegram_user_id BIGINT,
+                    username TEXT,
+                    first_name TEXT,
+                    meta_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
             )
-            """
-        )
+        else:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    telegram_user_id INTEGER,
+                    username TEXT,
+                    first_name TEXT,
+                    meta_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_user ON events(telegram_user_id)")
+        conn.commit()
 
 
 def log_event(
@@ -62,14 +65,18 @@ def log_event(
 ) -> None:
     init_db()
     payload = json.dumps(meta or {}, ensure_ascii=False, separators=(",", ":"))
-    with _lock, _connect() as conn:
+    sql = qp(
+        """
+        INSERT INTO events (ts, event_type, source, telegram_user_id, username, first_name, meta_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+    )
+    with _lock, connect_storage() as conn:
         conn.execute(
-            """
-            INSERT INTO events (ts, event_type, source, telegram_user_id, username, first_name, meta_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
+            sql,
             (utc_now_iso(), event_type, source, telegram_user_id, username, first_name, payload),
         )
+        conn.commit()
 
 
 def list_events(
@@ -92,21 +99,19 @@ def list_events(
         params.append(telegram_user_id)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
-    with _connect() as conn:
-        total = conn.execute(
-            f"SELECT COUNT(*) AS n FROM events {where_sql}",
-            params,
-        ).fetchone()["n"]
-        rows = conn.execute(
+    with connect_storage() as conn:
+        cnt_sql = qp(f"SELECT COUNT(*) AS n FROM events {where_sql}")
+        total = conn.execute(cnt_sql, params).fetchone()["n"]
+        q_sql = qp(
             f"""
             SELECT id, ts, event_type, source, telegram_user_id, username, first_name, meta_json
             FROM events
             {where_sql}
             ORDER BY id DESC
             LIMIT ? OFFSET ?
-            """,
-            [*params, limit, offset],
-        ).fetchall()
+            """
+        )
+        rows = conn.execute(q_sql, [*params, limit, offset]).fetchall()
 
     return {
         "total": total,
@@ -114,9 +119,14 @@ def list_events(
     }
 
 
+def _day_expr() -> str:
+    return "LEFT(ts::text, 10)" if use_postgres() else "substr(ts, 1, 10)"
+
+
 def summary() -> dict[str, Any]:
     init_db()
-    with _connect() as conn:
+    day_expr = _day_expr()
+    with connect_storage() as conn:
         total_events = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
         unique_users = conn.execute(
             "SELECT COUNT(DISTINCT telegram_user_id) AS n FROM events WHERE telegram_user_id IS NOT NULL"
@@ -135,8 +145,8 @@ def summary() -> dict[str, Any]:
         by_day = [
             dict(row)
             for row in conn.execute(
-                """
-                SELECT substr(ts, 1, 10) AS day, COUNT(*) AS count
+                f"""
+                SELECT {day_expr} AS day, COUNT(*) AS count
                 FROM events
                 GROUP BY day
                 ORDER BY day DESC
@@ -190,8 +200,7 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
 
-    # ---- source 1: events-based aggregation ---------------------------------
-    with _connect() as conn:
+    with connect_storage() as conn:
         ev_rows = conn.execute(
             """
             SELECT
@@ -208,19 +217,15 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
             WHERE telegram_user_id IS NOT NULL
             GROUP BY telegram_user_id
             ORDER BY last_seen_ts DESC
-            """,
+            """
         ).fetchall()
 
-        # ---- source 2: payment_codes redemption JSON ------------------------
-        code_rows: list[sqlite3.Row] = []
+        code_rows: list[Any] = []
         try:
-            code_rows = conn.execute(
-                "SELECT entry_json FROM payment_codes"
-            ).fetchall()
+            code_rows = conn.execute("SELECT entry_json FROM payment_codes").fetchall()
         except Exception:  # noqa: BLE001 — table may not exist yet
             pass
 
-    # Build merged dict keyed by telegram_user_id
     merged: dict[int, dict[str, Any]] = {}
     for row in ev_rows:
         uid = row["telegram_user_id"]
@@ -236,7 +241,6 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
             "bot_events_count": int(row["bot_events_count"] or 0),
         }
 
-    # Supplement with users found only in payment_codes redemption data
     for code_row in code_rows:
         try:
             entry = json.loads(code_row["entry_json"])
@@ -255,11 +259,9 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
         except (ValueError, TypeError):
             continue
         if uid in merged:
-            # already captured via events — just ensure redeem_count >= 1
             if merged[uid]["redeem_count"] == 0:
                 merged[uid]["redeem_count"] = 1
             continue
-        # user not in events at all — add a synthetic row from redemption data
         redeemed_at = entry.get("redeemed_at") or entry.get("created_at") or ""
         existing = merged.get(uid)
         if existing is None:
@@ -281,7 +283,7 @@ def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
     return {"total": total, "items": items[offset : offset + limit]}
 
 
-def _event_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _event_row_to_dict(row: Any) -> dict[str, Any]:
     try:
         meta = json.loads(row["meta_json"] or "{}")
     except json.JSONDecodeError:

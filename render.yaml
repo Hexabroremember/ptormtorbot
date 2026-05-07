@@ -20,6 +20,8 @@ services:
     dockerContext: .
     plan: free
     envVars:
+      - key: DATABASE_URL
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: WEB_APP_URL

@@ -1,66 +1,82 @@
-"""Short-lived PDF bytes keyed by token — SQLite-backed so Telegram can fetch across workers.
-
-Without persistence, each Uvicorn worker / replica holds tokens only in RAM; Telegram's
-servers fetch ``GET /pdf-download/{token}`` and may hit a different process → 404 → no file in chat.
-"""
+"""Short-lived PDF bytes keyed by token — persisted so Telegram can fetch across workers."""
 
 from __future__ import annotations
 
-import os
 import secrets
-import sqlite3
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
-DB_PATH = DATA_DIR / "events.sqlite3"
+from app.storage_connection import connect_storage, qp, use_postgres
 
 TTL_SECONDS = 900  # 15 minutes
 
 _lock = threading.Lock()
 
 
-def _connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
+def _table_columns_pg(conn: Any, table: str) -> set[str]:
+    rows = conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS pdf_download_tokens (
-            token TEXT PRIMARY KEY NOT NULL,
-            pdf_blob BLOB NOT NULL,
-            expires_at REAL NOT NULL,
-            telegram_user_id INTEGER,
-            username TEXT,
-            first_name TEXT
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (table,),
+    ).fetchall()
+    return {r["column_name"] for r in rows}
+
+
+def _ensure_schema(conn: Any) -> None:
+    if use_postgres():
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pdf_download_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                pdf_blob BYTEA NOT NULL,
+                expires_at DOUBLE PRECISION NOT NULL,
+                telegram_user_id BIGINT,
+                username TEXT,
+                first_name TEXT
+            )
+            """
         )
-        """
-    )
-    existing = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(pdf_download_tokens)").fetchall()
-    }
-    for col, ddl in (
-        ("telegram_user_id", "ALTER TABLE pdf_download_tokens ADD COLUMN telegram_user_id INTEGER"),
-        ("username", "ALTER TABLE pdf_download_tokens ADD COLUMN username TEXT"),
-        ("first_name", "ALTER TABLE pdf_download_tokens ADD COLUMN first_name TEXT"),
-    ):
-        if col not in existing:
-            conn.execute(ddl)
+        existing = _table_columns_pg(conn, "pdf_download_tokens")
+        if "telegram_user_id" not in existing:
+            conn.execute("ALTER TABLE pdf_download_tokens ADD COLUMN telegram_user_id BIGINT")
+        if "username" not in existing:
+            conn.execute("ALTER TABLE pdf_download_tokens ADD COLUMN username TEXT")
+        if "first_name" not in existing:
+            conn.execute("ALTER TABLE pdf_download_tokens ADD COLUMN first_name TEXT")
+    else:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS pdf_download_tokens (
+                token TEXT PRIMARY KEY NOT NULL,
+                pdf_blob BLOB NOT NULL,
+                expires_at REAL NOT NULL,
+                telegram_user_id INTEGER,
+                username TEXT,
+                first_name TEXT
+            )
+            """
+        )
+        existing = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(pdf_download_tokens)").fetchall()
+        }
+        for col, ddl in (
+            ("telegram_user_id", "ALTER TABLE pdf_download_tokens ADD COLUMN telegram_user_id INTEGER"),
+            ("username", "ALTER TABLE pdf_download_tokens ADD COLUMN username TEXT"),
+            ("first_name", "ALTER TABLE pdf_download_tokens ADD COLUMN first_name TEXT"),
+        ):
+            if col not in existing:
+                conn.execute(ddl)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_pdf_dl_expires ON pdf_download_tokens(expires_at)"
     )
 
 
-def _purge_expired(conn: sqlite3.Connection, now: float) -> None:
-    conn.execute("DELETE FROM pdf_download_tokens WHERE expires_at <= ?", (now,))
+def _purge_expired(conn: Any, now: float) -> None:
+    conn.execute(qp("DELETE FROM pdf_download_tokens WHERE expires_at <= ?"), (now,))
 
 
 def register_pdf_bytes(data: bytes, *, user_meta: dict[str, Any] | None = None) -> str:
@@ -69,16 +85,18 @@ def register_pdf_bytes(data: bytes, *, user_meta: dict[str, Any] | None = None) 
     expires_at = now + TTL_SECONDS
     user_meta = user_meta or {}
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_schema(conn)
             _purge_expired(conn, now)
             conn.execute(
-                """
-                INSERT INTO pdf_download_tokens
-                    (token, pdf_blob, expires_at, telegram_user_id, username, first_name)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                qp(
+                    """
+                    INSERT INTO pdf_download_tokens
+                        (token, pdf_blob, expires_at, telegram_user_id, username, first_name)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """
+                ),
                 (
                     token,
                     data,
@@ -97,23 +115,29 @@ def register_pdf_bytes(data: bytes, *, user_meta: dict[str, Any] | None = None) 
 def get_pdf_record(token: str) -> dict[str, Any] | None:
     now = time.time()
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_schema(conn)
             _purge_expired(conn, now)
             row = conn.execute(
-                """
-                SELECT pdf_blob, expires_at, telegram_user_id, username, first_name
-                FROM pdf_download_tokens
-                WHERE token = ?
-                """,
+                qp(
+                    """
+                    SELECT pdf_blob, expires_at, telegram_user_id, username, first_name
+                    FROM pdf_download_tokens
+                    WHERE token = ?
+                    """
+                ),
                 (token,),
             ).fetchone()
             if row is None:
                 return None
-            blob, exp, telegram_user_id, username, first_name = row
+            blob = row["pdf_blob"]
+            exp = row["expires_at"]
+            telegram_user_id = row["telegram_user_id"]
+            username = row["username"]
+            first_name = row["first_name"]
             if exp <= now:
-                conn.execute("DELETE FROM pdf_download_tokens WHERE token = ?", (token,))
+                conn.execute(qp("DELETE FROM pdf_download_tokens WHERE token = ?"), (token,))
                 conn.commit()
                 return None
             return {

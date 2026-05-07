@@ -1,32 +1,24 @@
-"""Persistent control flags for the admin panel — SQLite (same DB as analytics)."""
+"""Persistent control flags for the admin panel — SQLite or PostgreSQL (same DB as analytics)."""
 
 from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
 
+from app.storage_connection import connect_storage, qp, use_postgres
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
-DB_PATH = DATA_DIR / "events.sqlite3"
 
 LEGACY_CONTROL_JSON = DATA_DIR / "admin_control.json"
 
 _lock = threading.Lock()
 
 
-def _connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def _ensure_kv_table(conn: sqlite3.Connection) -> None:
+def _ensure_kv_table(conn: Any) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS app_kv (
@@ -37,11 +29,12 @@ def _ensure_kv_table(conn: sqlite3.Connection) -> None:
     )
 
 
-def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
+def _migrate_legacy_json(conn: Any) -> None:
     if not LEGACY_CONTROL_JSON.is_file():
         return
     row = conn.execute(
-        "SELECT COUNT(*) AS c FROM app_kv WHERE key = ?", ("maintenance_mode",)
+        qp("SELECT COUNT(*) AS c FROM app_kv WHERE key = ?"),
+        ("maintenance_mode",),
     ).fetchone()
     if row and int(row["c"]) > 0:
         return
@@ -50,27 +43,39 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
         if not isinstance(data, dict):
             return
         mm = "1" if bool(data.get("maintenance_mode")) else "0"
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO app_kv (key, value)
-            VALUES ('maintenance_mode', ?)
-            """,
-            (mm,),
-        )
+        if use_postgres():
+            conn.execute(
+                """
+                INSERT INTO app_kv (key, value)
+                VALUES ('maintenance_mode', %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """,
+                (mm,),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO app_kv (key, value)
+                VALUES ('maintenance_mode', ?)
+                """,
+                (mm,),
+            )
         conn.commit()
         LEGACY_CONTROL_JSON.replace(LEGACY_CONTROL_JSON.with_suffix(".json.bak"))
-    except (json.JSONDecodeError, OSError, sqlite3.Error):
+    except (json.JSONDecodeError, OSError):
         conn.rollback()
 
 
 def get_control_state() -> dict[str, Any]:
+    row = None
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_kv_table(conn)
             _migrate_legacy_json(conn)
             row = conn.execute(
-                "SELECT value FROM app_kv WHERE key = ?", ("maintenance_mode",)
+                qp("SELECT value FROM app_kv WHERE key = ?"),
+                ("maintenance_mode",),
             ).fetchone()
         finally:
             conn.close()
@@ -81,18 +86,28 @@ def get_control_state() -> dict[str, Any]:
 def set_maintenance_mode(enabled: bool) -> dict[str, Any]:
     val = "1" if enabled else "0"
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_kv_table(conn)
             _migrate_legacy_json(conn)
-            conn.execute(
-                """
-                INSERT INTO app_kv (key, value)
-                VALUES ('maintenance_mode', ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (val,),
-            )
+            if use_postgres():
+                conn.execute(
+                    """
+                    INSERT INTO app_kv (key, value)
+                    VALUES ('maintenance_mode', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """,
+                    (val,),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO app_kv (key, value)
+                    VALUES ('maintenance_mode', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (val,),
+                )
             conn.commit()
         finally:
             conn.close()

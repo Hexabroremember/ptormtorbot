@@ -199,22 +199,42 @@ function FormSnapshotCard({ title, data }) {
   );
 }
 
-/** pdf_generated: preview (watermark) = לא שולם; final = שולם (אחרי קוד תשלום) */
+/** pdf_generated: תצוגה מקדימה אינה סטטוס תשלום; סופי ללא סימן מים = אחרי אישור */
 function pdfPaymentBadge(meta) {
   const ps = meta.payment_status;
   if (ps === "paid_final" || ps === "paid") {
-    return { label: "שולם", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
+    return { label: "קובץ סופי (לאחר אישור)", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
   }
   if (ps === "preview_unpaid" || ps === "preview") {
-    return { label: "לא שולם", className: "bg-amber-100 text-amber-900 ring-1 ring-amber-200" };
+    return { label: "תצוגה מקדימה בלבד", className: "bg-slate-100 text-slate-700 ring-1 ring-slate-200" };
   }
   if (meta.watermark === true) {
-    return { label: "לא שולם", className: "bg-amber-100 text-amber-900 ring-1 ring-amber-200" };
+    return { label: "תצוגה מקדימה בלבד", className: "bg-slate-100 text-slate-700 ring-1 ring-slate-200" };
   }
   if (meta.watermark === false) {
-    return { label: "שולם", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
+    return { label: "קובץ סופי (לאחר אישור)", className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200" };
   }
   return { label: "לא ידוע", className: "bg-slate-100 text-slate-600" };
+}
+
+function activityEventBadge(event) {
+  const meta = event.meta || {};
+  if (event.event_type === "pdf_generated") {
+    return pdfPaymentBadge(meta);
+  }
+  if (event.event_type === "payment_code_redeemed") {
+    return {
+      label: "תשלום אושר (קוד)",
+      className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+    };
+  }
+  if (event.event_type === "crypto_payment_confirmed") {
+    return {
+      label: "תשלום אושר (קריפטו)",
+      className: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+    };
+  }
+  return null;
 }
 
 export default function AdminPanel() {
@@ -799,7 +819,7 @@ export default function AdminPanel() {
                   meta.code_last4 ||
                   meta.reason;
                 const open = detailEventId === event.id;
-                const payBadge = event.event_type === "pdf_generated" ? pdfPaymentBadge(meta) : null;
+                const payBadge = activityEventBadge(event);
                 return (
                   <div key={event.id} className="border-b border-slate-100 py-3 last:border-b-0">
                     <button
@@ -864,13 +884,17 @@ export default function AdminPanel() {
                         <FormSnapshotCard title="מימוש קוד (צילום)" data={meta.redemption} />
                         {event.event_type === "pdf_generated" ? (
                           <p className="text-xs text-slate-600">
-                            <span className="font-bold text-slate-800">סטטוס תשלום:</span>{" "}
+                            <span className="font-bold text-slate-800">סוג הפקה:</span>{" "}
                             {payBadge ? (
-                              <span className={`font-bold ${payBadge.label === "שולם" ? "text-emerald-700" : "text-amber-800"}`}>
+                              <span
+                                className={`font-bold ${
+                                  payBadge.label.includes("סופי") ? "text-emerald-700" : "text-slate-600"
+                                }`}
+                              >
                                 {payBadge.label}
-                                {payBadge.label === "לא שולם"
-                                  ? " — תצוגת דוגמה (עם סימון דוגמה)"
-                                  : " — PDF סופי (אחרי אישור תשלום)"}
+                                {payBadge.label.includes("תצוגה")
+                                  ? " — לא מייצג אישור תשלום; לאישור תשלום ראו אירוע מימוש קוד או תשלום."
+                                  : " — לאחר אישור תשלום במערכת."}
                               </span>
                             ) : null}
                           </p>
@@ -910,6 +934,11 @@ export default function AdminPanel() {
                     נוצר: {formatDate(code.created_at)}
                     {code.redeemed_at ? ` · נוצל: ${formatDate(code.redeemed_at)}` : ""}
                   </div>
+                  {code.issue_label ? (
+                    <p className="mt-1 text-xs font-semibold text-slate-700">
+                      סוג הנפקה: {code.issue_label}
+                    </p>
+                  ) : null}
                   {code.used && code.redemption ? (
                     <FormSnapshotCard title="פרטי המשתמש והטופס בעת המימוש" data={code.redemption} />
                   ) : null}

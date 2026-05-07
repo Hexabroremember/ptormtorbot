@@ -266,7 +266,9 @@ const content = {
     paymentApprovalSubmit: "אשר קוד",
     paymentApprovedBadge: "התשלום אושר — אפשר להוריד את הפטור מתור שלך.",
     paymentCodeInvalid: "הקוד שגוי או לא קיים.",
-    paymentCodeUsed: "הקוד כבר נוצל. צריך קוד חדש מהמנהל.",
+    paymentCodeUsed: "הקוד כבר נוצל. יש לבקש קוד חדש מהמנהל.",
+    paymentCodeExpiryMismatch:
+      "הקוד תואם חבילת תוקף אחרת. בחרו במיני־אפ את אותה תקופה שהוקצתה לקוד, או בקשו מהמנהל קוד מתאים.",
     paymentDownloadFinal: "הורד את הפטור מתור שלך",
     paymentDownloading: "מוריד…",
     previewLoadingDetail: "מכין תצוגת תמונה מהטופס…",
@@ -326,7 +328,9 @@ const content = {
     paymentApprovalSubmit: "تأكيد الرمز",
     paymentApprovedBadge: "تم تأكيد الدفع — يمكنك تنزيل الملف النهائي بدون علامة مائية.",
     paymentCodeInvalid: "الرمز غير صالح أو غير موجود.",
-    paymentCodeUsed: "تم استخدام هذا الرمز مسبقًا. اطلب رمزًا جديدًا.",
+    paymentCodeUsed: "تم استخدام هذا الرمز مسبقًا. اطلب رمزًا جديدًا من المسؤول.",
+    paymentCodeExpiryMismatch:
+      "الرمز مخصص لحزمة مدة أخرى. اختر في التطبيق نفس المدة التي صدر من أجلها الرمز، أو اطلب رمزًا ملائمًا.",
     paymentDownloadFinal: "تنزيل PDF النهائي (بدون علامة مائية)",
     paymentDownloading: "جاري التنزيل…",
     previewLoadingDetail: "جاري إعداد معاينة الصورة من النموذج…",
@@ -803,6 +807,8 @@ const App = () => {
       const detail = await parseJsonDetail(res);
       if (detail === "code_already_used") {
         setPaymentCodeError(t.paymentCodeUsed);
+      } else if (detail === "code_expiry_mismatch") {
+        setPaymentCodeError(t.paymentCodeExpiryMismatch);
       } else {
         setPaymentCodeError(t.paymentCodeInvalid);
       }

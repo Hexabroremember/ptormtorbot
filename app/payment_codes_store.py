@@ -1,21 +1,20 @@
-"""One-time payment approval codes — SQLite-backed (same DB as analytics)."""
+"""One-time payment approval codes — SQLite or PostgreSQL (same DB as analytics)."""
 
 from __future__ import annotations
 
 import json
 import os
 import secrets
-import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.storage_connection import connect_storage, qp, use_postgres
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
-DB_PATH = DATA_DIR / "events.sqlite3"
 
-# Legacy JSON path — migrated once into SQLite then renamed to .bak
 LEGACY_JSON_PATH = DATA_DIR / "payment_codes.json"
 
 _lock = threading.Lock()
@@ -25,15 +24,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def _ensure_table(conn: sqlite3.Connection) -> None:
+def _ensure_table(conn: Any) -> None:
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS payment_codes (
@@ -44,7 +35,7 @@ def _ensure_table(conn: sqlite3.Connection) -> None:
     )
 
 
-def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
+def _migrate_legacy_json(conn: Any) -> None:
     if not LEGACY_JSON_PATH.is_file():
         return
     n = conn.execute("SELECT COUNT(*) AS c FROM payment_codes").fetchone()["c"]
@@ -58,17 +49,29 @@ def _migrate_legacy_json(conn: sqlite3.Connection) -> None:
         for code, entry in codes.items():
             if not isinstance(code, str) or not isinstance(entry, dict):
                 continue
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO payment_codes (code, entry_json)
-                VALUES (?, ?)
-                """,
-                (code, json.dumps(entry, ensure_ascii=False)),
-            )
+            if use_postgres():
+                conn.execute(
+                    qp(
+                        """
+                        INSERT INTO payment_codes (code, entry_json)
+                        VALUES (?, ?)
+                        ON CONFLICT (code) DO UPDATE SET entry_json = EXCLUDED.entry_json
+                        """
+                    ),
+                    (code, json.dumps(entry, ensure_ascii=False)),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO payment_codes (code, entry_json)
+                    VALUES (?, ?)
+                    """,
+                    (code, json.dumps(entry, ensure_ascii=False)),
+                )
         conn.commit()
         bak = LEGACY_JSON_PATH.with_suffix(".json.bak")
         LEGACY_JSON_PATH.replace(bak)
-    except (json.JSONDecodeError, OSError, sqlite3.Error):
+    except (json.JSONDecodeError, OSError):
         conn.rollback()
 
 
@@ -79,14 +82,15 @@ def normalize_code(raw: str) -> str:
 def issue_new_code(*, meta: dict[str, Any] | None = None) -> str:
     """Generate and persist a new unused code; retries on collision."""
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
             for _ in range(50):
                 code = secrets.token_hex(5).upper()
                 exists = conn.execute(
-                    "SELECT 1 FROM payment_codes WHERE code = ?", (code,)
+                    qp("SELECT 1 FROM payment_codes WHERE code = ?"),
+                    (code,),
                 ).fetchone()
                 if exists:
                     continue
@@ -94,10 +98,12 @@ def issue_new_code(*, meta: dict[str, Any] | None = None) -> str:
                 if meta:
                     entry.update(meta)
                 conn.execute(
-                    """
-                    INSERT INTO payment_codes (code, entry_json)
-                    VALUES (?, ?)
-                    """,
+                    qp(
+                        """
+                        INSERT INTO payment_codes (code, entry_json)
+                        VALUES (?, ?)
+                        """
+                    ),
                     (code, json.dumps(entry, ensure_ascii=False)),
                 )
                 conn.commit()
@@ -110,13 +116,11 @@ def issue_new_code(*, meta: dict[str, Any] | None = None) -> str:
 def list_codes(*, include_code: bool = False) -> list[dict[str, Any]]:
     """Return codes for admin views, newest first."""
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
-            rows = conn.execute(
-                "SELECT code, entry_json FROM payment_codes"
-            ).fetchall()
+            rows = conn.execute("SELECT code, entry_json FROM payment_codes").fetchall()
         finally:
             conn.close()
 
@@ -139,6 +143,10 @@ def list_codes(*, include_code: bool = False) -> list[dict[str, Any]]:
             "order_id": entry.get("order_id"),
             "telegram_pdf_sent": bool(entry.get("telegram_pdf_sent")),
             "telegram_pdf_sent_at": entry.get("telegram_pdf_sent_at"),
+            "issue_scope": entry.get("issue_scope"),
+            "expiry_option": entry.get("expiry_option"),
+            "price_ils": entry.get("price_ils"),
+            "issue_label": entry.get("issue_label"),
         }
         red = entry.get("redemption")
         if isinstance(red, dict) and red:
@@ -150,13 +158,11 @@ def list_codes(*, include_code: bool = False) -> list[dict[str, Any]]:
 
 def codes_summary() -> dict[str, int]:
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
-            rows = conn.execute(
-                "SELECT entry_json FROM payment_codes"
-            ).fetchall()
+            rows = conn.execute("SELECT entry_json FROM payment_codes").fetchall()
         finally:
             conn.close()
     total = len(rows)
@@ -172,23 +178,18 @@ def codes_summary() -> dict[str, int]:
 
 
 def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[bool, str]:
-    """
-    Consume one code. Returns (success, message_key).
-    message_key: 'ok' | 'not_found' | 'already_used'
-
-    ``redemption`` is persisted on the code record for admin (form snapshot + Telegram id).
-    """
     code = normalize_code(raw)
     if len(code) < 8:
         return False, "not_found"
 
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
             row = conn.execute(
-                "SELECT entry_json FROM payment_codes WHERE code = ?", (code,)
+                qp("SELECT entry_json FROM payment_codes WHERE code = ?"),
+                (code,),
             ).fetchone()
             if row is None:
                 return False, "not_found"
@@ -205,10 +206,12 @@ def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[
             if redemption:
                 entry["redemption"] = redemption
             conn.execute(
-                """
-                UPDATE payment_codes SET entry_json = ?
-                WHERE code = ?
-                """,
+                qp(
+                    """
+                    UPDATE payment_codes SET entry_json = ?
+                    WHERE code = ?
+                    """
+                ),
                 (json.dumps(entry, ensure_ascii=False), code),
             )
             conn.commit()
@@ -220,12 +223,13 @@ def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[
 def get_code_entry(raw: str) -> dict[str, Any] | None:
     code = normalize_code(raw)
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
             row = conn.execute(
-                "SELECT entry_json FROM payment_codes WHERE code = ?", (code,)
+                qp("SELECT entry_json FROM payment_codes WHERE code = ?"),
+                (code,),
             ).fetchone()
         finally:
             conn.close()
@@ -241,12 +245,13 @@ def get_code_entry(raw: str) -> dict[str, Any] | None:
 def mark_code_telegram_pdf_sent(raw: str) -> None:
     code = normalize_code(raw)
     with _lock:
-        conn = _connect()
+        conn = connect_storage()
         try:
             _ensure_table(conn)
             _migrate_legacy_json(conn)
             row = conn.execute(
-                "SELECT entry_json FROM payment_codes WHERE code = ?", (code,)
+                qp("SELECT entry_json FROM payment_codes WHERE code = ?"),
+                (code,),
             ).fetchone()
             if row is None:
                 return
@@ -259,7 +264,7 @@ def mark_code_telegram_pdf_sent(raw: str) -> None:
             entry["telegram_pdf_sent"] = True
             entry["telegram_pdf_sent_at"] = _utc_now_iso()
             conn.execute(
-                "UPDATE payment_codes SET entry_json = ? WHERE code = ?",
+                qp("UPDATE payment_codes SET entry_json = ? WHERE code = ?"),
                 (json.dumps(entry, ensure_ascii=False), code),
             )
             conn.commit()

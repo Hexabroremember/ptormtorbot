@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from app.nowpayments import nowpayments_key_configured, related_payment_env_names
 from app.public_url import effective_public_base_url
+from app.storage_connection import use_postgres
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ def main() -> None:
             "Public app URL not resolved — set WEB_APP_URL or rely on "
             "RAILWAY_PUBLIC_DOMAIN / RENDER_EXTERNAL_URL so Telegram can fetch PDF links."
         )
+
+    if use_postgres():
+        logger.info("Database backend: PostgreSQL (DATABASE_URL / Supabase).")
+    else:
+        logger.info("Database backend: SQLite under DATA_DIR.")
 
     if nowpayments_key_configured():
         logger.info("NOWPayments API key in environment: yes")

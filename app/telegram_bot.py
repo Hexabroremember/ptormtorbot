@@ -103,57 +103,118 @@ _conflict_warning_emitted = False
 
 HEBREW, ENGLISH, ID_NUM, EXP_DATE = range(4)
 
-# Hebrew UI (Telegram HTML). Brand: פטור מתור.
+# Hebrew UI (Telegram HTML). Brand: פטור מתור — טון רשמי ואחיד, עם אימוג'י לפי סוג.
 MSG_START = (
-    "<b>📋 פטור מתור</b>\n"
-    "כאן יוצרים את טופס ה־PDF עם הפרטים שלכם — מהיר ופשוט.\n\n"
+    "<b>📋 פטור מתור — טופס בצ'אט</b>\n\n"
+    "כאן נאספים פרטים ליצירת קובץ PDF בהתאם לדרישות הטופס.\n\n"
     "<b>שלב 1 מתוך 4</b>\n"
-    "שלחו את <b>השם המלא בעברית</b> כפי שיודפס על הטופס."
+    "שלחו את <b>השם המלא בעברית</b> כפי שיופיע בהדפסה."
 )
 MSG_STEP_EN = (
     "<b>שלב 2 מתוך 4</b>\n"
-    "שם מלא <b>באנגלית</b>.\n"
-    "השם יישמר באותיות גדולות (CAPS), כמו בטופס הרשמי."
+    "שלחו את <b>השם המלא באנגלית</b>.\n"
+    "השם יישמר באותיות גדולות (CAPS), בהתאם לפורמט הרשמי."
 )
-MSG_STEP_ID = "<b>שלב 3 מתוך 4</b>\nמספר זהות (ספרות בלבד):"
+MSG_STEP_ID = "<b>שלב 3 מתוך 4</b>\nשלחו את <b>מספר הזהות</b> (ספרות בלבד)."
 MSG_STEP_EXP = (
     "<b>שלב 4 מתוך 4</b>\n"
-    "תאריך תפוגה — למשל: <code>30/04/2029</code>"
+    "שלחו את <b>תאריך התפוגה</b> להדפסה — לדוגמה: <code>30/04/2029</code>"
 )
-MSG_EMPTY_HE = "נא לשלוח שם בעברית שאינו ריק."
-MSG_WORKING = "<b>מייצר את הקובץ…</b>\nעוד רגע וזה מוכן."
-MSG_CANCEL = "בוטל. שלחו /start כדי להתחיל מחדש."
+MSG_EMPTY_HE = "⚠️ יש להזין שם בעברית שאינו ריק."
+MSG_WORKING = (
+    "<b>⏳ מעבדים את הבקשה</b>\n"
+    "נוצר קובץ PDF — נא להמתין רגע."
+)
+MSG_CANCEL = (
+    "◀️ <b>הפעולה בוטלה</b>\n\n"
+    "לפתיחה מחדש של השירות שלחו את הפקודה /start."
+)
 MSG_HELP = (
-    "<b>📋 פטור מתור — עזרה</b>\n\n"
-    "<b>כפתורים למטה</b> — \"📋 הנפקת פטור מתור\" פותח את המיני אפליקציה בתוך טלגרם; "
-    "\"עזרה\" פותח את מסך העזרה.\n"
-    "ליד שדה ההקלדה יופיע גם כפתור תפריט <b>📋 טופס PDF</b> (אם הוגדר).\n\n"
-    "<b>/start</b> — פתיחה מחדש והסבר\n"
-    "<b>/cancel</b> — עצירה באמצע מילוי בצ'אט (כשמשתמשים במצב צ'אט ללא מיני אפ)\n\n"
-    "<b>/code</b> — בעל הבוט בלבד: הנפקת קוד אישור תשלום חד פעמי ללקוח.\n\n"
-    "יש למלא ארבעה שדות: שם בעברית ובאנגלית, מספר זהות ותאריך תפוגה.\n"
-    "בסוף נשלחות שתי תמונות ללא כיתוב (ראשונה מקורית ללא סימן מים, שנייה דחוסה עם סימן מים), "
-    "ולבסוף קובץ PDF ללא סימן מים.\n"
-    "באפליקציה: התצוגה וההורדה בדף הטופס.\n"
+    "<b>📖 פטור מתור — מדריך קצר</b>\n\n"
+    "<b>📌 כפתורי המקלדת</b>\n"
+    "• <b>📋 הנפקת פטור מתור</b> — פותח את המיני־אפליקציה בתוך טלגרם.\n"
+    "• <b>❓ עזרה</b> — קישור למסך העזרה.\n"
+    "בתפריט הצ'אט ייתכן גם כפתור <b>📋 טופס PDF</b> (כאשר הוגדר).\n\n"
+    "<b>פקודות</b>\n"
+    "• <code>/start</code> — תפריט ראשי והסבר.\n"
+    "• <code>/cancel</code> — יציאה ממילוי בצ'אט (כאשר לא משתמשים במיני־אפ).\n"
+    "• <code>/code</code> — הנפקת קוד תשלום (מנהלים בלבד).\n\n"
+    "<b>תהליך בצ'אט</b>\n"
+    "לאחר מילוי ארבעת השדות נשלחות תמונות תצוגה ולאחריהן קובץ PDF ללא סימן מים.\n"
+    "במיני־אפליקציה קיימות תצוגה מקדימה והורדה לפי שלבי התשלום.\n"
     "השם באנגלית נשמר באותיות גדולות."
 )
 MSG_WEB_APP_START = (
-    "<b>📋 פטור מתור</b>\n"
-    "לטופס המלא עם תצוגה חיה — לחצו על <b>הכפתורים למטה</b> או על כפתור התפריט "
-    "ליד שדה ההקלדה (📋 טופס PDF). המיני אפ נפתח בתוך טלגרם.\n\n"
-    "שם מלא בעברית ובאנגלית, מספר זהות, תאריך תפוגה וסימן מים — בקשה אחת, "
-    "תצוגה מקדימה והורדת PDF."
+    "<b>📋 פטור מתור — מיני־אפליקציה</b>\n\n"
+    "להמשך מילוי הטופס עם תצוגה חיה:\n"
+    "לחצו על <b>הכפתורים בתחתית המסך</b> או על כפתור התפריט ליד שדה ההקלדה "
+    "(כאשר מוצג <b>📋 טופס PDF</b>).\n\n"
+    "השירות נפתח בתוך טלגרם. לאחר השלמת הפרטים תוצג תצוגה מקדימה, "
+    "ובשלב התשלום ניתן להוריד את הקובץ הסופי בהתאם לאישור התשלום."
 )
-MSG_ERR_VALID = "נתונים לא תקינים — בדקו את השדות ונסו שוב."
-MSG_ERR_GEN = "לא הצלחנו ליצור את הקובץ. נסו שוב או פנו למנהל המערכת."
+MSG_ERR_VALID = "⚠️ הנתונים אינם תקינים. נא לבדוק את השדות ולנסות שוב."
+MSG_ERR_GEN = (
+    "❌ לא ניתן ליצור את הקובץ כעת.\n"
+    "נא לנסות שוב; אם הבעיה נמשכת, יש לפנות למנהל המערכת."
+)
 MSG_DOC_CAP = (
-    f"✅ <b>PDF ללא סימן מים</b> — <code>{OUTPUT_PDF_FILENAME}</code> · שני עמודים"
+    f"✅ <b>קובץ PDF ללא סימן מים</b>\n"
+    f"<code>{OUTPUT_PDF_FILENAME}</code> · שני עמודים"
 )
 BTN_RESTART = "🔄 התחלה מחדש"
 
 # Reply keyboard labels + external help (Telegram magic link).
 BTN_ISSUE_FORM = "📋 הנפקת פטור מתור"
-BTN_HELP = "עזרה"
+BTN_HELP = "❓ עזרה"
+
+# הנפקת קודים — תוויות תקופה (מיושר עם המיני־אפ)
+CODE_TIER_LABELS: dict[str, str] = {
+    "300": "שנה · ₪300",
+    "500": "3 שנים · ₪500",
+    "900": "5 שנים · ₪900",
+    "1200": "10 שנים · ₪1200",
+    "1500": "לצמיתות · ₪1500",
+}
+
+
+def code_issue_inline_keyboard() -> InlineKeyboardMarkup:
+    """בחירת סוג קוד: גלובלי או לפי חבילת תוקף."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🌐 קוד גלובלי · כל התקופות",
+                    callback_data="ci:g",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    CODE_TIER_LABELS["300"],
+                    callback_data="ci:300",
+                ),
+                InlineKeyboardButton(
+                    CODE_TIER_LABELS["500"],
+                    callback_data="ci:500",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    CODE_TIER_LABELS["900"],
+                    callback_data="ci:900",
+                ),
+                InlineKeyboardButton(
+                    CODE_TIER_LABELS["1200"],
+                    callback_data="ci:1200",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    CODE_TIER_LABELS["1500"],
+                    callback_data="ci:1500",
+                )
+            ],
+        ]
+    )
 HELP_TELEGRAM_WEB_URL = "https://t.me/m/5jdTPOGGZWEx"
 
 # בעל הבוט — רק מנהלים יכולים להנפיק קודי תשלום (פקודה /code).
@@ -177,35 +238,98 @@ def admin_mini_app_url_for_user(telegram_user_id: int | None) -> str:
 async def cmd_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Owner-only: issue a one-time code for external payments (Mini App redemption)."""
+    """מנהלים: תפריט הנפקת קוד תשלום (גלובלי או לפי תקופת תוקף)."""
     if update.message is None:
         return
     user = update.effective_user
     if user is None or user.id not in admin_ids():
-        await update.message.reply_text("⛔ אין לך הרשאה לפקודה הזו.")
+        await update.message.reply_text(
+            "🔒 <b>אין הרשאה</b>\n\nפקודה זו מיועדת למנהלי המערכת בלבד.",
+            parse_mode="HTML",
+        )
         return
-    try:
-        from app.payment_codes_store import issue_new_code
+    await update.message.reply_text(
+        "🔑 <b>הנפקת קוד אישור תשלום חד־פעמי</b>\n\n"
+        "נא לבחור את סוג הקוד:\n"
+        "• <b>קוד גלובלי</b> — מתאים לכל בחירת תקופת תוקף במיני־אפליקציה.\n"
+        "• <b>קוד לפי תקופה</b> — הלקוח נדרש לבחור במיני־אפליקציה את אותה חבילת תוקף "
+        "שהונפקה עבור הקוד.\n\n"
+        "לאחר הבחירה יוצג הקוד להעתקה ולשליחה ללקוח לאחר קבלת התשלום.",
+        parse_mode="HTML",
+        reply_markup=code_issue_inline_keyboard(),
+    )
 
-        code = issue_new_code()
+
+async def callback_issue_payment_code(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """מנהלים: יצירת קוד לאחר לחיצה על כפתור סוג ההנפקה."""
+    q = update.callback_query
+    if q is None or not q.data:
+        return
+    user = update.effective_user
+    if user is None or user.id not in admin_ids():
+        await q.answer(text="אין הרשאה לפעולה זו.", show_alert=True)
+        return
+    raw = q.data.strip()
+    if not raw.startswith("ci:"):
+        return
+    suffix = raw[3:]
+    from app.payment_codes_store import issue_new_code
+
+    meta: dict[str, object]
+    heading: str
+    try:
+        if suffix == "g":
+            meta = {
+                "issue_scope": "global",
+                "issue_label": "קוד גלובלי — כל תקופות התוקף",
+            }
+            heading = "קוד גלובלי — כל תקופות התוקף"
+        elif suffix in CODE_TIER_LABELS:
+            meta = {
+                "issue_scope": "tier",
+                "expiry_option": suffix,
+                "price_ils": float(suffix),
+                "issue_label": CODE_TIER_LABELS[suffix],
+            }
+            heading = CODE_TIER_LABELS[suffix]
+        else:
+            await q.answer(text="בחירה לא תקינה.", show_alert=True)
+            return
+
+        code = issue_new_code(meta=meta)
         log_event(
             "payment_code_issued",
             source="telegram_bot",
             telegram_user_id=user.id,
             username=user.username,
             first_name=user.first_name,
+            meta={
+                "issue_scope": meta.get("issue_scope"),
+                "expiry_option": meta.get("expiry_option"),
+            },
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("issue payment code failed")
-        await update.message.reply_text(f"❌ שגיאה ביצירת קוד: {exc}")
+        await q.answer(text="שגיאה ביצירת הקוד.", show_alert=True)
+        if q.message:
+            await q.message.reply_text(
+                f"❌ <b>שגיאה ביצירת הקוד</b>\n\n<code>{exc}</code>",
+                parse_mode="HTML",
+            )
         return
-    await update.message.reply_text(
-        "<b>קוד אישור תשלום חד פעמי</b>\n\n"
-        f"<code>{code}</code>\n\n"
-        "שלח את הקוד ללקוח לאחר שקיבלת תשלום מחוץ למערכת. "
-        "הלקוח יזין אותו בשלב התשלום במיני אפ — שימוש יחיד.",
-        parse_mode="HTML",
-    )
+
+    await q.answer(text="הקוד הונפק בהצלחה.", show_alert=False)
+    if q.message:
+        await q.message.reply_text(
+            "✅ <b>קוד אישור תשלום הונפק</b>\n\n"
+            f"<b>סוג:</b> {heading}\n\n"
+            f"<code>{code}</code>\n\n"
+            "יש להעביר את הקוד ללקוח לאחר קבלת התשלום בפועל.\n"
+            "הקוד מיועד לשימוש חד־פעמי בלבד.",
+            parse_mode="HTML",
+        )
 
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
@@ -231,7 +355,7 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
         rows.append(
             [
                 KeyboardButton(
-                    "ניהול",
+                    "🛡 פאנל ניהול",
                     web_app=WebAppInfo(url=admin_url),
                 ),
             ]
@@ -241,38 +365,43 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
         rows,
         resize_keyboard=True,
         is_persistent=True,
-        input_field_placeholder="לחצו למטה לטופס או הקלידו כאן…",
+        input_field_placeholder="ניתן לבחור מהכפתורים למטה או להקליד כאן…",
     )
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Owner/admin only: send a Web App button to the admin panel + the access code."""
+    """מנהלים: קישור לפאנל הניהול וקוד גיבוי לדפדפן."""
     if update.message is None:
         return
     user = update.effective_user
     if user is None or user.id not in admin_ids():
-        await update.message.reply_text("⛔ אין לך הרשאה לפאנל הניהול.")
+        await update.message.reply_text(
+            "🔒 <b>אין הרשאה</b>\n\nפקודה זו מיועדת למנהלי המערכת בלבד.",
+            parse_mode="HTML",
+        )
         return
     admin_url = admin_mini_app_url_for_user(user.id)
     if not admin_url:
         await update.message.reply_text(
-            "לא נמצאה כתובת ציבורית לשרת (WEB_APP_URL או דומיין Railway/Render). "
-            "אי אפשר לפתוח את פאנל הניהול."
+            "⚠️ לא נמצאה כתובת ציבורית לשרת "
+            "(יש להגדיר WEB_APP_URL או דומיין בסביבת ההפעלה).\n"
+            "ללא כתובת זו לא ניתן לפתוח את פאנל הניהול.",
+            parse_mode="HTML",
         )
         return
     secret = effective_admin_secret()
     secret_line = (
-        f"\n\n🔑 <b>קוד גיבוי (דפדפן בלבד):</b>\n<code>{secret}</code>"
+        f"\n\n🔑 <b>קוד גיבוי (פתיחה מדפדפן חיצוני בלבד):</b>\n<code>{secret}</code>"
         if secret
-        else "\n\n⚠️ TELEGRAM_BOT_TOKEN לא מוגדר — קוד גיבוי לא זמין."
+        else "\n\n⚠️ לא מוגדר TELEGRAM_BOT_TOKEN — קוד גיבוי אינו זמין."
     )
     await update.message.reply_text(
-        f"🛡 <b>פאנל ניהול</b>{secret_line}\n\n"
-        "לחץ על הכפתור — הקישור מסונכרן עם טלגרם (זיהוי אוטומטי). "
-        "אם פתחת מחוץ לטלגרם, השתמש בקוד הגיבוי.",
+        f"🛡 <b>פאנל ניהול — גישה למנהלים</b>{secret_line}\n\n"
+        "לפתיחה מאובטחת מתוך טלגרם לחצו על הכפתור למטה.\n"
+        "אם נפתח חלון מחוץ לטלגרם, השתמשו בקוד הגיבוי לעיל.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("פתח פאנל ניהול", web_app=WebAppInfo(url=admin_url))]]
+            [[InlineKeyboardButton("🛡 פתיחת פאנל ניהול", web_app=WebAppInfo(url=admin_url))]]
         ),
     )
 
@@ -284,9 +413,10 @@ async def help_keyboard_open_link(
     if update.message is None:
         return
     await update.message.reply_text(
-        "📖 עזרה",
+        "📖 <b>עזרה</b>",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("פתח עזרה", url=HELP_TELEGRAM_WEB_URL)]]
+            [[InlineKeyboardButton("📖 פתיחת מסך העזרה", url=HELP_TELEGRAM_WEB_URL)]]
         ),
     )
 
@@ -442,9 +572,12 @@ async def deliver_generated_pdf(
             await reply.reply_text(f"{MSG_ERR_VALID}\n\n{exc}")
         context.user_data.clear()
         return ConversationHandler.END
-    except FileNotFoundError as exc:
+    except FileNotFoundError:
         if reply:
-            await reply.reply_text(f"❌ {exc}")
+            await reply.reply_text(
+                "❌ <b>חסר קובץ נדרש בשרת</b>\n\nנא לפנות למנהל המערכת.",
+                parse_mode="HTML",
+            )
         context.user_data.clear()
         return ConversationHandler.END
     except Exception as exc:  # noqa: BLE001
@@ -505,7 +638,13 @@ async def deliver_generated_pdf(
     if reopen_kb:
         await context.bot.send_message(
             chat_id=chat.id,
-            text="⌨️ לפתיחת הטופס שוב — השתמשו בכפתורים למטה (📋 הנפקת פטור מתור / עזרה) או בכפתור התפריט \"📋 טופס PDF\".",
+            text=(
+                "⌨️ <b>להמשך שימוש בטופס</b>\n\n"
+                "ניתן לפתוח שוב את המיני־אפליקציה באמצעות הכפתורים בתחתית המסך "
+                "(📋 הנפקת פטור מתור / ❓ עזרה) או באמצעות כפתור התפריט "
+                "<b>📋 טופס PDF</b>."
+            ),
+            parse_mode="HTML",
             reply_markup=reopen_kb,
         )
     context.user_data.clear()
@@ -608,10 +747,10 @@ def _run_polling_with_token(token: str) -> None:
         await application.bot.delete_webhook(drop_pending_updates=True)
         await application.bot.set_my_commands(
             [
-                BotCommand("start", "פתיחת טופס (מיני אפ / צ'אט אם אין קישור)"),
-                BotCommand("code", "קוד תשלום חד פעמי (בעלים)"),
+                BotCommand("start", "פותח את השירות (מיני־אפ או צ'אט)"),
+                BotCommand("code", "הנפקת קוד תשלום (מנהלים בלבד)"),
                 BotCommand("admin", "פאנל ניהול (מנהלים בלבד)"),
-                BotCommand("help", "עזרה והסבר קצר"),
+                BotCommand("help", "מדריך והסבר קצר"),
                 BotCommand("cancel", "ביטול מילוי בצ'אט"),
             ]
         )
@@ -628,6 +767,7 @@ def _run_polling_with_token(token: str) -> None:
                 logger.warning("Could not set Web App menu button: %s", exc)
 
     application = Application.builder().token(token).post_init(post_init).build()
+    application.add_handler(CallbackQueryHandler(callback_issue_payment_code, pattern=r"^ci:"))
     application.add_handler(CommandHandler("code", cmd_code))
     application.add_handler(CommandHandler("admin", cmd_admin))
     application.add_handler(CommandHandler("help", help_command))
@@ -638,19 +778,19 @@ def _run_polling_with_token(token: str) -> None:
         ],
         states={
             HEBREW: [
-                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(HEBREW)),
+                MessageHandler(filters.Regex("^❓ עזרה$"), _help_then_state(HEBREW)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, hebrew),
             ],
             ENGLISH: [
-                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(ENGLISH)),
+                MessageHandler(filters.Regex("^❓ עזרה$"), _help_then_state(ENGLISH)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, english),
             ],
             ID_NUM: [
-                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(ID_NUM)),
+                MessageHandler(filters.Regex("^❓ עזרה$"), _help_then_state(ID_NUM)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, id_num),
             ],
             EXP_DATE: [
-                MessageHandler(filters.Regex("^עזרה$"), _help_then_state(EXP_DATE)),
+                MessageHandler(filters.Regex("^❓ עזרה$"), _help_then_state(EXP_DATE)),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, exp_date),
             ],
         },
@@ -661,7 +801,7 @@ def _run_polling_with_token(token: str) -> None:
         ],
     )
     application.add_handler(conv)
-    application.add_handler(MessageHandler(filters.Regex("^עזרה$"), help_keyboard_open_link))
+    application.add_handler(MessageHandler(filters.Regex("^❓ עזרה$"), help_keyboard_open_link))
     application.add_error_handler(on_error)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,

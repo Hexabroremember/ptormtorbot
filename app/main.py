@@ -191,6 +191,18 @@ def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dic
     return out
 
 
+def _payment_code_matches_form_expiry(code_entry: dict[str, Any], form: RedeemFormSnapshot | None) -> bool:
+    """Tier-specific codes require the Mini App expiry package to match issuance."""
+    if code_entry.get("issue_scope") != "tier":
+        return True
+    required = code_entry.get("expiry_option")
+    if not required:
+        return True
+    if form is None or not form.expiry_option:
+        return False
+    return str(form.expiry_option).strip() == str(required).strip()
+
+
 def _index_html_response() -> HTMLResponse:
     """Serve built React SPA when ``dist/index.html`` exists (Docker/Render); else dev ``index.html``."""
     dist_index = DIST_DIR / "index.html"
@@ -835,12 +847,12 @@ async def crypto_ipn(request: Request) -> JSONResponse:
             )
         ok_msg, err_msg = send_telegram_message(
             tg_user_id,
-            f"✅ <b>התשלום התקבל ואושר!</b>\n\n"
-            f"קוד האישור שלך: <code>{code}</code>\n\n"
+            "✅ <b>התשלום התקבל ואושר</b>\n\n"
+            f"🔑 קוד האישור שלכם: <code>{code}</code>\n\n"
             + (
-                "שלחנו גם את הקובץ הסופי כאן בצ׳אט."
+                "📎 קובץ PDF סופי נשלח גם כאן בצ׳אט."
                 if pdf_sent
-                else "חזור לאפליקציה, הזן את הקוד בשדה אישור התשלום וקבל את הקובץ."
+                else "יש לחזור למיני־אפליקציה, להזין את הקוד בשדה אישור התשלום ולהוריד את הקובץ."
             ),
         )
         if not ok_msg:
@@ -889,10 +901,30 @@ def redeem_payment_code(
     )
     check_rate_limit("redeem", request, tg_user)
     ident = _telegram_log_identity(tg_user)
-    redemption = _build_redemption_dict(tg_user, payload.form)
-    ok, key = redeem_code(payload.code, redemption=redemption or None)
     norm = normalize_code(payload.code)
     code_hint = norm[-4:].upper() if len(norm) >= 4 else None
+
+    pending_entry = get_code_entry(norm) if len(norm) >= 8 else None
+    if pending_entry is not None and not pending_entry.get("used"):
+        if not _payment_code_matches_form_expiry(pending_entry, payload.form):
+            log_event(
+                "payment_code_redeem_failed",
+                source="mini_app",
+                telegram_user_id=ident["telegram_user_id"],
+                username=ident["username"],
+                first_name=ident["first_name"],
+                meta={
+                    **_request_meta(request),
+                    "reason": "expiry_mismatch",
+                    "code_last4": code_hint,
+                    "code_requires": pending_entry.get("expiry_option"),
+                    "form_expiry": payload.form.expiry_option if payload.form else None,
+                },
+            )
+            raise HTTPException(status_code=400, detail="code_expiry_mismatch")
+
+    redemption = _build_redemption_dict(tg_user, payload.form)
+    ok, key = redeem_code(payload.code, redemption=redemption or None)
     if ok:
         code_entry = get_code_entry(norm) or {}
         telegram_pdf_sent = bool(code_entry.get("telegram_pdf_sent"))
@@ -942,11 +974,11 @@ def redeem_payment_code(
         if tg_user:
             ok_msg, err_msg = send_telegram_message(
                 tg_user.id,
-                "✅ <b>התשלום אושר.</b>\n"
+                "✅ <b>תשלום אושר במערכת</b>\n\n"
                 + (
-                    "שלחנו גם עותק של הקובץ הסופי כאן בצ׳אט."
+                    "📎 קובץ PDF סופי נשלח גם כאן בצ׳אט."
                     if telegram_pdf_sent
-                    else "אפשר להוריד את הקובץ הסופי באפליקציה."
+                    else "ניתן להוריד את הקובץ הסופי מהמיני־אפליקציה."
                 ),
             )
             if not ok_msg:
