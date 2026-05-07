@@ -43,7 +43,7 @@ from app.main import (
     replace_fields,
 )
 from app.activity_store import log_event
-from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess
+from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess, mint_user_tg_sess
 from app.public_url import effective_public_base_url
 
 load_dotenv(ROOT_DIR / ".env", override=False)
@@ -64,19 +64,29 @@ def normalize_https_origin(raw: str) -> str:
     return ("https://" + s.lstrip("/")).rstrip("/")
 
 
-def mini_app_entry_url() -> str:
-    """URL Telegram opens for the Mini App — ``static/index.html`` on the same host."""
+def mini_app_entry_url(telegram_user_id: int | None = None) -> str:
+    """URL Telegram opens for the Mini App — ``static/index.html`` on the same host.
+
+    When a user-specific keyboard button is sent, include a signed user session so
+    payment callbacks can still DM the user if Telegram initData is unavailable.
+    """
     base = normalize_https_origin(effective_public_base_url())
     if not base:
         return ""
     low = base.lower()
-    if low.endswith("/static/index.html"):
-        return base
-    if low.endswith("/index.html"):
-        return base
-    if low.endswith("/static"):
-        return f"{base}/index.html"
-    return f"{base}/static/index.html"
+    if low.endswith("/static/index.html") or low.endswith("/index.html"):
+        url = base
+    elif low.endswith("/static"):
+        url = f"{base}/index.html"
+    else:
+        url = f"{base}/static/index.html"
+    if telegram_user_id is None:
+        return url
+    sess = mint_user_tg_sess(telegram_user_id)
+    if not sess:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}tg_user_sess={quote(sess, safe='')}"
 
 
 # Deprecated for URL building — use ``effective_public_base_url()`` / ``mini_app_entry_url()`` instead.
@@ -205,7 +215,7 @@ def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
 
 def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup | None:
     """Bottom reply keyboard: public Mini App; admin Mini App only for admins."""
-    mini = mini_app_entry_url()
+    mini = mini_app_entry_url(user_id)
     if not mini:
         return None
     rows = [

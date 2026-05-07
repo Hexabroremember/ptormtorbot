@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from io import BytesIO
 import os
+import time
 
 import httpx
+
+_profile_cache: dict[int, tuple[float, dict[str, str | None]]] = {}
+_PROFILE_TTL_SECONDS = int(os.environ.get("TELEGRAM_PROFILE_CACHE_TTL_SECONDS", "21600"))
 
 
 def _telegram_api_err(resp: httpx.Response) -> str:
@@ -22,6 +26,41 @@ def _telegram_api_err(resp: httpx.Response) -> str:
 
 def _bot_token() -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+
+
+def get_telegram_chat_profile(chat_id: int | str | None) -> dict[str, str | None]:
+    """Fetch public-ish Telegram chat fields for logs; returns empty values on failure."""
+    token = _bot_token()
+    if not token or not chat_id:
+        return {}
+    try:
+        uid = int(chat_id)
+    except (TypeError, ValueError):
+        return {}
+    now = time.time()
+    cached = _profile_cache.get(uid)
+    if cached and now - cached[0] < _PROFILE_TTL_SECONDS:
+        return cached[1]
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"https://api.telegram.org/bot{token}/getChat",
+                params={"chat_id": uid},
+            )
+            if not resp.is_success:
+                profile: dict[str, str | None] = {}
+            else:
+                data = resp.json()
+                result = data.get("result") if isinstance(data, dict) else None
+                profile = {
+                    "username": result.get("username") if isinstance(result, dict) else None,
+                    "first_name": result.get("first_name") if isinstance(result, dict) else None,
+                    "last_name": result.get("last_name") if isinstance(result, dict) else None,
+                }
+    except Exception:
+        profile = {}
+    _profile_cache[uid] = (now, profile)
+    return profile
 
 
 def send_telegram_message(chat_id: int | str | None, text: str) -> tuple[bool, str | None]:

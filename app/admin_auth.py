@@ -108,6 +108,7 @@ def resolve_telegram_webapp_user(
     x_telegram_init_data: str | None = None,
     tg_init_data_query: str | None = None,
     body_init_data: str | None = None,
+    tg_user_sess: str | None = None,
     authorization: str | None = None,
 ) -> TelegramWebAppUser | None:
     """Verify Mini App user from initData, trying several sources.
@@ -144,6 +145,15 @@ def resolve_telegram_webapp_user(
         user = parse_optional_telegram_user(raw)
         if user:
             return user
+
+    sess = (
+        (tg_user_sess or "").strip()
+        or request.query_params.get("tg_user_sess", "").strip()
+        or request.headers.get("x-telegram-user-sess", "").strip()
+    )
+    user = verify_user_tg_sess(sess)
+    if user:
+        return user
     return None
 
 
@@ -192,6 +202,7 @@ def extract_webapp_init_data(
 # Signed URL session: bot embeds tg_sess in Web App URL so the panel authenticates as Telegram
 # when initData is empty (some clients). Bound to admin user id + expiry; HMAC with bot token.
 TG_SESS_TTL_SEC = int(os.environ.get("ADMIN_TG_SESS_TTL_SEC", str(7 * 24 * 60 * 60)))
+TG_USER_SESS_TTL_SEC = int(os.environ.get("TG_USER_SESS_TTL_SEC", str(30 * 24 * 60 * 60)))
 
 
 def _admin_tg_sess_key() -> bytes:
@@ -201,6 +212,13 @@ def _admin_tg_sess_key() -> bytes:
     return hashlib.sha256(b"admin_tg_sess_v1:" + token.encode("utf-8")).digest()
 
 
+def _user_tg_sess_key() -> bytes:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        return b""
+    return hashlib.sha256(b"user_tg_sess_v1:" + token.encode("utf-8")).digest()
+
+
 def mint_admin_tg_sess(telegram_user_id: int) -> str:
     """Return URL-safe token proving this user opened /admin from our bot (until expiry)."""
     if not _admin_tg_sess_key():
@@ -208,6 +226,17 @@ def mint_admin_tg_sess(telegram_user_id: int) -> str:
     exp = int(time.time()) + max(60, TG_SESS_TTL_SEC)
     body = f"{telegram_user_id}:{exp}"
     digest = hmac.new(_admin_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    raw = f"{body}:{digest}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def mint_user_tg_sess(telegram_user_id: int) -> str:
+    """Return URL-safe token proving this user opened the Mini App from our bot."""
+    if not _user_tg_sess_key():
+        return ""
+    exp = int(time.time()) + max(60, TG_USER_SESS_TTL_SEC)
+    body = f"{telegram_user_id}:{exp}"
+    digest = hmac.new(_user_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
     raw = f"{body}:{digest}"
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
 
@@ -231,6 +260,27 @@ def verify_admin_tg_sess(token: str) -> TelegramWebAppUser | None:
     if not hmac.compare_digest(expected, digest):
         return None
     if uid not in admin_ids():
+        return None
+    return TelegramWebAppUser(id=uid)
+
+
+def verify_user_tg_sess(token: str) -> TelegramWebAppUser | None:
+    """Validate a public Mini App user session token minted by the bot."""
+    if not token or not _user_tg_sess_key():
+        return None
+    try:
+        pad = "=" * ((4 - len(token) % 4) % 4)
+        decoded = base64.urlsafe_b64decode(token + pad).decode("utf-8")
+        body, digest = decoded.rsplit(":", 1)
+        uid_s, exp_s = body.split(":", 1)
+        uid = int(uid_s)
+        exp = int(exp_s)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if time.time() > exp:
+        return None
+    expected = hmac.new(_user_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, digest):
         return None
     return TelegramWebAppUser(id=uid)
 

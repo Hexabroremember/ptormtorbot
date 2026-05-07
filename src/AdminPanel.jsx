@@ -594,7 +594,7 @@ export default function AdminPanel() {
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs ltr">{u.username ? `@${u.username}` : "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs ltr">{u.username ? `@${u.username}` : "אין @"}</td>
                     <td className="px-3 py-2">{u.event_count}</td>
                     <td className="px-3 py-2">
                       {u.redeem_count > 0 ? (
@@ -835,6 +835,8 @@ export default function AdminPanel() {
                           ) : null}
                           {event.username ? (
                             <span className="font-mono text-blue-600">@{event.username}</span>
+                          ) : event.telegram_user_id ? (
+                            <span className="text-slate-400">אין @ ציבורי</span>
                           ) : null}
                           {event.telegram_user_id ? (
                             <span className="font-mono text-slate-400">{event.telegram_user_id}</span>

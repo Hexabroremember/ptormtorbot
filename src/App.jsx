@@ -16,6 +16,7 @@ import {
   Apple,
   Ticket,
   Download,
+  Trash2,
 } from 'lucide-react';
 
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -25,6 +26,13 @@ function formatDateDdMmYyyy(d) {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${dd}/${mm}/${yyyy}`;
+}
+
+function formatSavedDate(raw) {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${formatDateDdMmYyyy(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 /** API origin when SPA is on a different host than FastAPI (needed for HTTPS PDF download in Telegram). */
@@ -88,6 +96,30 @@ export function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+/** Persist bot-signed user session from the Mini App URL; survives payment browser hops. */
+function captureTelegramUserSessionFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const sess = params.get("tg_user_sess");
+    if (!sess) return;
+    sessionStorage.setItem("telegramUserSession", sess);
+    params.delete("tg_user_sess");
+    const qs = params.toString();
+    const clean = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", clean);
+  } catch {
+    /* ignore */
+  }
+}
+
+function storedTelegramUserSession() {
+  try {
+    return sessionStorage.getItem("telegramUserSession") || "";
+  } catch {
+    return "";
+  }
+}
+
 /** Telegram often fills initData shortly after load — wait before redeem so the server can resolve chat_id. */
 function waitForTelegramInitData(maxMs = 12000, intervalMs = 50) {
   return new Promise((resolve) => {
@@ -116,19 +148,29 @@ function waitForTelegramInitData(maxMs = 12000, intervalMs = 50) {
   });
 }
 
-/** Append initData as query param — some proxies strip custom headers on POST. */
-function appendTgInitQuery(url, initData) {
-  if (!initData || url.includes("tg_init_data=")) return url;
+/** Append Telegram context as query params — some proxies strip custom headers on POST. */
+function appendTelegramContextQuery(url, initData) {
+  const params = [];
+  if (initData && !url.includes("tg_init_data=")) {
+    params.push(`tg_init_data=${encodeURIComponent(initData)}`);
+  }
+  const sess = storedTelegramUserSession();
+  if (sess && !url.includes("tg_user_sess=")) {
+    params.push(`tg_user_sess=${encodeURIComponent(sess)}`);
+  }
+  if (!params.length) return url;
   const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}tg_init_data=${encodeURIComponent(initData)}`;
+  return `${url}${sep}${params.join("&")}`;
 }
 
 export function jsonHeaders(extra = {}) {
   const initData = telegramInitData();
+  const userSession = storedTelegramUserSession();
   return {
     "Content-Type": "application/json",
     ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
     ...(initData ? { Authorization: `TMA ${initData}` } : {}),
+    ...(userSession ? { "X-Telegram-User-Sess": userSession } : {}),
     ...extra,
   };
 }
@@ -231,6 +273,13 @@ const content = {
     previewReadyBanner: "הטופס הופק בהצלחה! עברו על התמונה לפני מעבר לתשלום.",
     previewImageNote:
       "זוהי תצוגת תמונה בלבד של העמוד הראשון. הקובץ המלא יהיה זמין להורדה לאחר אישור התשלום.",
+    savedFormsTitle: "טפסים קודמים",
+    savedFormsHint: "אפשר לטעון טופס שמילאתם בעבר ולהמשיך בתהליך מקוצר.",
+    savedFormsLoad: "טען",
+    savedFormsDelete: "מחק",
+    savedFormsEmpty: "אין עדיין טפסים שמורים למשתמש הזה.",
+    savedFormsSaved: "נשמר אוטומטית",
+    savedFormsSaving: "שומר…",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -284,6 +333,13 @@ const content = {
     previewReadyBanner: "تم إنشاء النموذج. راجعوا الصورة قبل الدفع.",
     previewImageNote:
       "معاينة صورة للصفحة الأولى فقط (مع العلامة المائية). الملف الكامل يُتاح بعد تأكيد الدفع.",
+    savedFormsTitle: "نماذج سابقة",
+    savedFormsHint: "يمكن تحميل نموذج سابق ومتابعة العملية بسرعة.",
+    savedFormsLoad: "تحميل",
+    savedFormsDelete: "حذف",
+    savedFormsEmpty: "لا توجد نماذج محفوظة لهذا المستخدم بعد.",
+    savedFormsSaved: "تم الحفظ تلقائيًا",
+    savedFormsSaving: "جاري الحفظ…",
   },
 };
 
@@ -304,6 +360,10 @@ const App = () => {
   const [finalPdfDownloading, setFinalPdfDownloading] = useState(false);
 
   const [step1Error, setStep1Error] = useState(null);
+  const [savedForms, setSavedForms] = useState([]);
+  const [savedFormsLoaded, setSavedFormsLoaded] = useState(false);
+  const [savedFormsStatus, setSavedFormsStatus] = useState("idle"); // idle | loading | saving | saved
+  const [activeSavedFormId, setActiveSavedFormId] = useState(null);
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -318,6 +378,7 @@ const App = () => {
   const [pdfError, setPdfError] = useState(null);
 
   const cachedPreviewSigRef = useRef(null);
+  const suppressAutosaveRef = useRef(false);
 
   const previewFormSignature = useMemo(
     () =>
@@ -336,8 +397,82 @@ const App = () => {
   const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
 
   useEffect(() => {
+    captureTelegramUserSessionFromUrl();
     window.Telegram?.WebApp?.ready?.();
   }, []);
+
+  const loadSavedForms = async () => {
+    try {
+      setSavedFormsStatus("loading");
+      const initData = telegramInitData();
+      const res = await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(), initData), {
+        headers: jsonHeaders(),
+      });
+      if (!res.ok) {
+        setSavedFormsLoaded(true);
+        setSavedFormsStatus("idle");
+        return;
+      }
+      const data = await res.json();
+      setSavedForms(Array.isArray(data.items) ? data.items : []);
+      setSavedFormsLoaded(true);
+      setSavedFormsStatus("idle");
+    } catch {
+      setSavedFormsLoaded(true);
+      setSavedFormsStatus("idle");
+    }
+  };
+
+  const saveCurrentForm = async ({ silent = true } = {}) => {
+    const hasAnyValue = Object.values(formData).some((v) => String(v || "").trim());
+    if (!hasAnyValue) return null;
+    try {
+      setSavedFormsStatus("saving");
+      const initData = telegramInitData();
+      const res = await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(), initData), {
+        method: "PUT",
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          id: activeSavedFormId,
+          form: formData,
+          telegram_init_data: initData || "",
+          telegram_user_session: storedTelegramUserSession(),
+        }),
+      });
+      if (!res.ok) {
+        setSavedFormsStatus("idle");
+        return null;
+      }
+      const row = await res.json();
+      setActiveSavedFormId(row.id);
+      setSavedForms((prev) => {
+        const rest = prev.filter((item) => item.id !== row.id);
+        return [row, ...rest].slice(0, 15);
+      });
+      setSavedFormsStatus("saved");
+      if (!silent) setTimeout(() => setSavedFormsStatus("idle"), 1200);
+      return row;
+    } catch {
+      setSavedFormsStatus("idle");
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    loadSavedForms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!savedFormsLoaded || suppressAutosaveRef.current) return undefined;
+    const hasAnyValue = Object.values(formData).some((v) => String(v || "").trim());
+    if (!hasAnyValue) return undefined;
+    const timer = window.setTimeout(() => {
+      saveCurrentForm({ silent: true });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, savedFormsLoaded]);
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -366,6 +501,11 @@ const App = () => {
   const buildRedeemApiUrl = () => {
     const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
     return base ? `${base}/redeem-payment-code` : "/redeem-payment-code";
+  };
+
+  const buildSavedFormsApiUrl = (suffix = "") => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-saved-forms${suffix}` : `/api/my-saved-forms${suffix}`;
   };
 
   useEffect(() => {
@@ -414,7 +554,7 @@ const App = () => {
       }
       try {
         const idDigits = formData.idNumber.replace(/\D/g, "");
-        const res = await fetch(buildPdfApiUrl(), {
+        const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
           method: "POST",
           headers: jsonHeaders(),
           body: JSON.stringify({
@@ -424,6 +564,7 @@ const App = () => {
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             watermark: true,
             telegram_init_data: telegramInitData() || "",
+            telegram_user_session: storedTelegramUserSession(),
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
@@ -469,7 +610,47 @@ const App = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleNext = () => {
+  const handleLoadSavedForm = (saved) => {
+    suppressAutosaveRef.current = true;
+    setActiveSavedFormId(saved.id);
+    setFormData((prev) => ({
+      ...prev,
+      fullName: saved.form?.fullName || "",
+      fullNameEn: saved.form?.fullNameEn || "",
+      idNumber: saved.form?.idNumber || "",
+      expiryOption: saved.form?.expiryOption || "",
+      birthDate: saved.form?.birthDate || "",
+      idIssueDate: saved.form?.idIssueDate || "",
+    }));
+    setPreviewImageUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    cachedPreviewSigRef.current = null;
+    setPaymentApproved(false);
+    setCryptoSelected(false);
+    setPaymentCodeInput("");
+    setPaymentCodeError(null);
+    setTimeout(() => {
+      suppressAutosaveRef.current = false;
+    }, 0);
+  };
+
+  const handleDeleteSavedForm = async (id) => {
+    try {
+      const initData = telegramInitData();
+      await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(`/${encodeURIComponent(id)}`), initData), {
+        method: "DELETE",
+        headers: jsonHeaders(),
+      });
+      setSavedForms((prev) => prev.filter((item) => item.id !== id));
+      if (activeSavedFormId === id) setActiveSavedFormId(null);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleNext = async () => {
     if (currentStep === 1) {
       const err = validateStep1(formData, language);
       if (err) {
@@ -477,6 +658,7 @@ const App = () => {
         return;
       }
       setStep1Error(null);
+      await saveCurrentForm({ silent: false });
     }
     if (currentStep < 3) setCurrentStep(currentStep + 1);
   };
@@ -503,7 +685,8 @@ const App = () => {
         await waitForTelegramInitData(12000);
         const tg = window.Telegram?.WebApp;
         const tgUser = tg?.initDataUnsafe?.user;
-        const res = await fetch(buildCryptoApiUrl("/api/crypto/create-invoice"), {
+        const initData = telegramInitData();
+        const res = await fetch(appendTelegramContextQuery(buildCryptoApiUrl("/api/crypto/create-invoice"), initData), {
           method: "POST",
           headers: jsonHeaders(),
           body: JSON.stringify({
@@ -519,7 +702,8 @@ const App = () => {
               expiration_date: computeExpirationForPdf(formData.expiryOption),
               expiry_option: formData.expiryOption,
             },
-            telegram_init_data: telegramInitData() || "",
+            telegram_init_data: initData || "",
+            telegram_user_session: storedTelegramUserSession(),
           }),
         });
         if (!res.ok) {
@@ -593,7 +777,7 @@ const App = () => {
       window.Telegram?.WebApp?.ready?.();
       await waitForTelegramInitData(12000);
       const initData = telegramInitData();
-      const redeemUrl = appendTgInitQuery(buildRedeemApiUrl(), initData);
+      const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
       const idDigits = formData.idNumber.replace(/\D/g, "");
       const res = await fetch(redeemUrl, {
         method: "POST",
@@ -608,6 +792,7 @@ const App = () => {
             expiry_option: formData.expiryOption,
           },
           telegram_init_data: initData || "",
+          telegram_user_session: storedTelegramUserSession(),
         }),
       });
       if (res.ok) {
@@ -638,7 +823,7 @@ const App = () => {
     setPaymentCodeError(null);
     try {
       const idDigits = formData.idNumber.replace(/\D/g, "");
-        const res = await fetch(buildPdfApiUrl(), {
+        const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
           method: "POST",
           headers: jsonHeaders(),
           body: JSON.stringify({
@@ -648,6 +833,7 @@ const App = () => {
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             watermark: false,
             telegram_init_data: telegramInitData() || "",
+            telegram_user_session: storedTelegramUserSession(),
           }),
         });
       if (!res.ok) {
@@ -707,6 +893,57 @@ const App = () => {
         return (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
             <h2 className="text-xl font-bold text-slate-800 border-b pb-2">{t.step1Title}</h2>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-bold text-slate-800">{t.savedFormsTitle}</h3>
+                  <p className="text-xs text-slate-600">{t.savedFormsHint}</p>
+                </div>
+                <span className="text-xs font-bold text-blue-700">
+                  {savedFormsStatus === "saving"
+                    ? t.savedFormsSaving
+                    : savedFormsStatus === "saved"
+                      ? t.savedFormsSaved
+                      : ""}
+                </span>
+              </div>
+              {savedForms.length ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  {savedForms.slice(0, 4).map((saved) => (
+                    <div key={saved.id} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-800">{saved.title}</p>
+                          <p className="text-xs text-slate-500">{formatSavedDate(saved.updated_at)}</p>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleLoadSavedForm(saved)}
+                            className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-blue-700"
+                          >
+                            {t.savedFormsLoad}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSavedForm(saved.id)}
+                            className="rounded-lg bg-slate-100 p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
+                            aria-label={t.savedFormsDelete}
+                            title={t.savedFormsDelete}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : savedFormsLoaded ? (
+                <p className="text-sm text-slate-500">{t.savedFormsEmpty}</p>
+              ) : (
+                <p className="text-sm text-slate-500">{t.savedFormsSaving}</p>
+              )}
+            </div>
             {step1Error ? (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">
                 {step1Error}

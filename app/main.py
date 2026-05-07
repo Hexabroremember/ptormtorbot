@@ -37,10 +37,16 @@ from app.payment_codes_store import (
     normalize_code,
     redeem_code,
 )
-from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
+from app.pdf_download_cache import get_pdf_record, register_pdf_bytes
 from app.public_url import effective_public_base_url
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
-from app.telegram_notify import send_telegram_document, send_telegram_document_url, send_telegram_message
+from app.telegram_notify import (
+    get_telegram_chat_profile,
+    send_telegram_document,
+    send_telegram_document_url,
+    send_telegram_message,
+)
+from app.user_saved_forms import delete_for_user, list_for_user, upsert_for_user
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -105,6 +111,7 @@ class GeneratePdfRequest(BaseModel):
     expiration_date: str = Field(..., min_length=1, max_length=24)
     watermark: bool = False
     telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
 class RedeemFormSnapshot(BaseModel):
@@ -119,6 +126,7 @@ class RedeemPaymentCodeRequest(BaseModel):
     code: str = Field(..., min_length=4, max_length=64)
     form: RedeemFormSnapshot | None = None
     telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
 class MaintenanceModeRequest(BaseModel):
@@ -133,6 +141,23 @@ class CreateCryptoInvoiceRequest(BaseModel):
     first_name: str | None = Field(default=None, max_length=64)
     form: RedeemFormSnapshot | None = None
     telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
+
+
+class SavedFormSnapshot(BaseModel):
+    fullName: str | None = Field(default="", max_length=120)
+    fullNameEn: str | None = Field(default="", max_length=120)
+    idNumber: str | None = Field(default="", max_length=32)
+    expiryOption: str | None = Field(default="", max_length=32)
+    birthDate: str | None = Field(default="", max_length=32)
+    idIssueDate: str | None = Field(default="", max_length=32)
+
+
+class SavedFormRequest(BaseModel):
+    id: str | None = Field(default=None, max_length=80)
+    form: SavedFormSnapshot
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
 class RateLimitOverrideRequest(BaseModel):
@@ -147,11 +172,12 @@ def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dic
     """Persist Mini App user + optional form snapshot when a payment code is redeemed."""
     out: dict[str, Any] = {}
     if tg_user:
-        out["telegram_user_id"] = tg_user.id
-        if tg_user.username:
-            out["username"] = tg_user.username
-        if tg_user.first_name:
-            out["first_name"] = tg_user.first_name
+        ident = _telegram_log_identity(tg_user)
+        out["telegram_user_id"] = ident["telegram_user_id"]
+        if ident["username"]:
+            out["username"] = ident["username"]
+        if ident["first_name"]:
+            out["first_name"] = ident["first_name"]
     if form:
         raw = form.model_dump(exclude_none=True)
         for key in ("hebrew_full_name", "english_full_name", "id_number", "expiration_date", "expiry_option"):
@@ -202,6 +228,7 @@ def _telegram_user_from_webapp_request(
     x_telegram_init_data: str | None = None,
     tg_init_data_query: str | None = None,
     body_init_data: str | None = None,
+    tg_user_sess: str | None = None,
     authorization: str | None = None,
 ):
     auth = authorization or request.headers.get("Authorization") or request.headers.get("authorization")
@@ -210,8 +237,47 @@ def _telegram_user_from_webapp_request(
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data_query,
         body_init_data=body_init_data,
+        tg_user_sess=tg_user_sess,
         authorization=auth,
     )
+
+
+def _require_mini_app_user(
+    request: Request,
+    *,
+    x_telegram_init_data: str | None = None,
+    tg_init_data_query: str | None = None,
+    body_init_data: str | None = None,
+    tg_user_sess: str | None = None,
+    authorization: str | None = None,
+):
+    user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data_query,
+        body_init_data=body_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    if user is None:
+        raise HTTPException(status_code=401, detail="telegram_user_required")
+    return user
+
+
+def _telegram_log_identity(tg_user) -> dict[str, Any]:
+    if tg_user is None:
+        return {"telegram_user_id": None, "username": None, "first_name": None}
+    username = getattr(tg_user, "username", None)
+    first_name = getattr(tg_user, "first_name", None)
+    if not username or not first_name:
+        profile = get_telegram_chat_profile(getattr(tg_user, "id", None))
+        username = username or profile.get("username")
+        first_name = first_name or profile.get("first_name")
+    return {
+        "telegram_user_id": tg_user.id,
+        "username": username,
+        "first_name": first_name,
+    }
 
 
 def _request_meta(request: Request, *, watermark: bool | None = None) -> dict[str, str | bool | None]:
@@ -254,6 +320,86 @@ if DIST_ASSETS_DIR.is_dir():
 
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.get("/api/my-saved-forms")
+def my_saved_forms(
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+    tg_user_sess: str | None = Query(default=None),
+) -> dict:
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    return list_for_user(tg_user.id)
+
+
+@app.put("/api/my-saved-forms")
+def save_my_form(
+    payload: SavedFormRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict:
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
+        authorization=authorization,
+    )
+    ident = _telegram_log_identity(tg_user)
+    row = upsert_for_user(
+        tg_user.id,
+        form=payload.form.model_dump(),
+        form_id=payload.id,
+    )
+    log_event(
+        "saved_form_upserted",
+        source="mini_app",
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
+        meta={"saved_form_id": row["id"], "title": row.get("title")},
+    )
+    return row
+
+
+@app.delete("/api/my-saved-forms/{form_id}")
+def delete_my_form(
+    form_id: str,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+    tg_user_sess: str | None = Query(default=None),
+) -> dict[str, bool]:
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    ident = _telegram_log_identity(tg_user)
+    out = delete_for_user(tg_user.id, form_id)
+    log_event(
+        "saved_form_deleted",
+        source="mini_app",
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
+        meta={"saved_form_id": form_id, "deleted": out["ok"]},
+    )
+    return out
 
 
 @app.get("/api/admin/debug")
@@ -306,12 +452,22 @@ def admin_events(
     event_type: str | None = Query(default=None),
     telegram_user_id: int | None = Query(default=None),
 ) -> dict:
-    return list_events(
+    data = list_events(
         limit=limit,
         offset=offset,
         event_type=event_type,
         telegram_user_id=telegram_user_id,
     )
+    for item in data.get("items", []):
+        uid = item.get("telegram_user_id")
+        if not uid or (item.get("username") and item.get("first_name")):
+            continue
+        profile = get_telegram_chat_profile(uid)
+        if not item.get("username") and profile.get("username"):
+            item["username"] = profile["username"]
+        if not item.get("first_name") and profile.get("first_name"):
+            item["first_name"] = profile["first_name"]
+    return data
 
 
 @app.get("/api/admin/payment-codes")
@@ -460,7 +616,14 @@ def _send_final_pdf_to_telegram(
     base_url = effective_public_base_url()
     if base_url:
         try:
-            dl_token = register_pdf_bytes(pdf_bytes)
+            dl_token = register_pdf_bytes(
+                pdf_bytes,
+                user_meta={
+                    "telegram_user_id": telegram_user_id,
+                    "username": username,
+                    "first_name": first_name,
+                },
+            )
             pdf_url = f"{base_url}/pdf-download/{dl_token}"
             ok, err = send_telegram_document_url(chat_id, pdf_url, caption=caption)
             if not ok:
@@ -521,14 +684,16 @@ async def crypto_create_invoice(
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data,
         body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
         authorization=authorization,
     )
     check_rate_limit("create_invoice", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
 
     # Prefer init-data user over payload (init-data is server-verified)
-    real_user_id = (tg_user.id if tg_user else None) or payload.telegram_user_id
-    real_username = (tg_user.username if tg_user else None) or payload.username
-    real_first_name = (tg_user.first_name if tg_user else None) or payload.first_name
+    real_user_id = ident["telegram_user_id"] or payload.telegram_user_id
+    real_username = ident["username"] or payload.username
+    real_first_name = ident["first_name"] or payload.first_name
     form_snapshot = _build_redemption_dict(tg_user, payload.form)
 
     description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(payload.price_ils)}"
@@ -714,6 +879,7 @@ def redeem_payment_code(
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data,
         body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
         authorization=authorization,
     )
     logger.info(
@@ -722,6 +888,7 @@ def redeem_payment_code(
         bool((payload.telegram_init_data or "").strip()),
     )
     check_rate_limit("redeem", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
     redemption = _build_redemption_dict(tg_user, payload.form)
     ok, key = redeem_code(payload.code, redemption=redemption or None)
     norm = normalize_code(payload.code)
@@ -742,9 +909,9 @@ def redeem_payment_code(
                     log_event(
                         "telegram_pdf_skipped_no_form_data",
                         source="mini_app",
-                        telegram_user_id=tg_user.id,
-                        username=tg_user.username,
-                        first_name=tg_user.first_name,
+                        telegram_user_id=ident["telegram_user_id"],
+                        username=ident["username"],
+                        first_name=ident["first_name"],
                         meta={
                             "code_last4": code_hint,
                             "form_received": bool(payload.form),
@@ -756,9 +923,9 @@ def redeem_payment_code(
                     chat_id=tg_user.id,
                     pdf_bytes=pdf_bytes,
                     event_source="mini_app",
-                    telegram_user_id=tg_user.id,
-                    username=tg_user.username,
-                    first_name=tg_user.first_name,
+                    telegram_user_id=ident["telegram_user_id"],
+                    username=ident["username"],
+                    first_name=ident["first_name"],
                     meta={"code_last4": code_hint, "reason": "payment_code_redeemed"},
                 ):
                     mark_code_telegram_pdf_sent(norm)
@@ -767,9 +934,9 @@ def redeem_payment_code(
                 log_event(
                     "telegram_delivery_failed",
                     source="mini_app",
-                    telegram_user_id=tg_user.id,
-                    username=tg_user.username,
-                    first_name=tg_user.first_name,
+                    telegram_user_id=ident["telegram_user_id"],
+                    username=ident["username"],
+                    first_name=ident["first_name"],
                     meta={"code_last4": code_hint, "error": str(exc), "exception_type": type(exc).__name__},
                 )
         if tg_user:
@@ -786,9 +953,9 @@ def redeem_payment_code(
                 log_event(
                     "telegram_delivery_failed",
                     source="mini_app",
-                    telegram_user_id=tg_user.id,
-                    username=tg_user.username,
-                    first_name=tg_user.first_name,
+                    telegram_user_id=ident["telegram_user_id"],
+                    username=ident["username"],
+                    first_name=ident["first_name"],
                     meta={
                         "code_last4": code_hint,
                         "kind": "redeem_confirmation",
@@ -807,9 +974,9 @@ def redeem_payment_code(
         log_event(
             "payment_code_redeemed",
             source="mini_app",
-            telegram_user_id=tg_user.id if tg_user else None,
-            username=tg_user.username if tg_user else None,
-            first_name=tg_user.first_name if tg_user else None,
+            telegram_user_id=ident["telegram_user_id"],
+            username=ident["username"],
+            first_name=ident["first_name"],
             meta={
                 **_request_meta(request),
                 "code_last4": code_hint,
@@ -823,18 +990,18 @@ def redeem_payment_code(
         log_event(
             "payment_code_redeem_failed",
             source="mini_app",
-            telegram_user_id=tg_user.id if tg_user else None,
-            username=tg_user.username if tg_user else None,
-            first_name=tg_user.first_name if tg_user else None,
+            telegram_user_id=ident["telegram_user_id"],
+            username=ident["username"],
+            first_name=ident["first_name"],
             meta={**_request_meta(request), "reason": "already_used", "code_last4": code_hint},
         )
         raise HTTPException(status_code=400, detail="code_already_used")
     log_event(
         "payment_code_redeem_failed",
         source="mini_app",
-        telegram_user_id=tg_user.id if tg_user else None,
-        username=tg_user.username if tg_user else None,
-        first_name=tg_user.first_name if tg_user else None,
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
         meta={**_request_meta(request), "reason": "invalid", "code_last4": code_hint},
     )
     raise HTTPException(status_code=400, detail="invalid_code")
@@ -855,11 +1022,13 @@ def generate_pdf(
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data,
         body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
         authorization=authorization,
     )
     # Only rate-limit preview (watermark=True) requests; final downloads are gated by single-use code.
     if payload.watermark:
         check_rate_limit("preview_pdf", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
     try:
         pdf_bytes = replace_fields(
             hebrew_full_name=payload.hebrew_full_name.strip(),
@@ -875,7 +1044,7 @@ def generate_pdf(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not generate PDF: {exc}") from exc
 
-    dl_token = register_pdf_bytes(pdf_bytes)
+    dl_token = register_pdf_bytes(pdf_bytes, user_meta=ident)
     headers = {
         "Content-Disposition": f'inline; filename="{OUTPUT_PDF_FILENAME}"',
         # Mini App / Telegram WebView often blocks blob: downloads — clients can open this HTTPS path instead.
@@ -884,9 +1053,9 @@ def generate_pdf(
     log_event(
         "pdf_generated",
         source="mini_app" if tg_user else "api",
-        telegram_user_id=tg_user.id if tg_user else None,
-        username=tg_user.username if tg_user else None,
-        first_name=tg_user.first_name if tg_user else None,
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
         meta={
             **_request_meta(request, watermark=payload.watermark),
             "payment_status": "paid_final" if not payload.watermark else "preview_unpaid",
@@ -904,12 +1073,20 @@ def generate_pdf(
 @app.get("/pdf-download/{token}")
 def download_pdf_by_token(token: str, request: Request) -> Response:
     """HTTPS download URL for the same bytes as ``POST /generate-pdf`` (Telegram-friendly)."""
-    data = get_pdf_bytes(token)
-    if data is None:
+    record = get_pdf_record(token)
+    if record is None:
         logger.warning("pdf_download miss token_prefix=%s", token[:16])
         raise HTTPException(status_code=404, detail="download_expired_or_invalid")
+    data = record["pdf_blob"]
     logger.info("pdf_download ok bytes=%s token_prefix=%s", len(data), token[:12])
-    log_event("pdf_downloaded", source="mini_app", meta=_request_meta(request))
+    log_event(
+        "pdf_downloaded",
+        source="mini_app",
+        telegram_user_id=record.get("telegram_user_id"),
+        username=record.get("username"),
+        first_name=record.get("first_name"),
+        meta=_request_meta(request),
+    )
     return Response(
         content=data,
         media_type="application/pdf",
