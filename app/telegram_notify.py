@@ -41,6 +41,38 @@ def send_telegram_message(chat_id: int | str | None, text: str) -> tuple[bool, s
         return False, str(exc)
 
 
+def send_telegram_document_url(
+    chat_id: int | str | None,
+    document_url: str,
+    *,
+    caption: str | None = None,
+) -> tuple[bool, str | None]:
+    """Send a document by URL — Telegram fetches the file itself (no multipart upload needed)."""
+    token = _bot_token()
+    if not token or not chat_id:
+        return False, "telegram_bot_token_or_chat_missing"
+    if not document_url:
+        return False, "document_url_missing"
+    try:
+        with httpx.Client(timeout=20) as client:
+            payload: dict[str, str | int] = {
+                "chat_id": chat_id,
+                "document": document_url,
+                "parse_mode": "HTML",
+            }
+            if caption:
+                payload["caption"] = caption
+            resp = client.post(
+                f"https://api.telegram.org/bot{token}/sendDocument",
+                json=payload,
+            )
+            if resp.is_success:
+                return True, None
+            return False, _telegram_api_err(resp)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def send_telegram_document(
     chat_id: int | str | None,
     pdf_bytes: bytes,
@@ -48,6 +80,7 @@ def send_telegram_document(
     filename: str,
     caption: str | None = None,
 ) -> tuple[bool, str | None]:
+    """Send a document by uploading bytes (multipart). Prefer send_telegram_document_url when possible."""
     token = _bot_token()
     if not token or not chat_id:
         return False, "telegram_bot_token_or_chat_missing"

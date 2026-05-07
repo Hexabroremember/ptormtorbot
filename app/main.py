@@ -38,7 +38,7 @@ from app.payment_codes_store import (
 )
 from app.pdf_download_cache import get_pdf_bytes, register_pdf_bytes
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
-from app.telegram_notify import send_telegram_document, send_telegram_message
+from app.telegram_notify import send_telegram_document, send_telegram_document_url, send_telegram_message
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -403,14 +403,54 @@ def _send_final_pdf_to_telegram(
     first_name: str | None,
     meta: dict[str, Any],
 ) -> bool:
-    if not chat_id or not pdf_bytes:
+    if not chat_id:
+        log_event(
+            "telegram_delivery_failed",
+            source=event_source,
+            telegram_user_id=telegram_user_id,
+            username=username,
+            first_name=first_name,
+            meta={**meta, "error": "no_chat_id"},
+        )
         return False
-    ok, err = send_telegram_document(
-        chat_id,
-        pdf_bytes,
-        filename=OUTPUT_PDF_FILENAME,
-        caption="הקובץ הסופי נשמר כאן בצ׳אט כדי שלא יאבד.",
-    )
+    if not pdf_bytes:
+        log_event(
+            "telegram_delivery_failed",
+            source=event_source,
+            telegram_user_id=telegram_user_id,
+            username=username,
+            first_name=first_name,
+            meta={**meta, "error": "pdf_bytes_is_none"},
+        )
+        return False
+
+    caption = "הקובץ הסופי נשמר כאן בצ׳אט כדי שלא יאבד."
+
+    # Prefer URL-based delivery: register the bytes under a download token and tell
+    # Telegram to fetch the file from our own HTTPS endpoint — avoids multipart issues.
+    base_url = os.environ.get("WEB_APP_URL", "").strip().rstrip("/")
+    if base_url:
+        try:
+            dl_token = register_pdf_bytes(pdf_bytes)
+            pdf_url = f"{base_url}/pdf-download/{dl_token}"
+            ok, err = send_telegram_document_url(chat_id, pdf_url, caption=caption)
+        except Exception as exc:
+            ok, err = False, f"url_method_exception: {exc}"
+    else:
+        ok, err = False, "WEB_APP_URL_not_configured"
+
+    # If URL method failed (e.g. WEB_APP_URL missing), fall back to multipart upload.
+    if not ok:
+        url_err = err
+        ok, err = send_telegram_document(
+            chat_id,
+            pdf_bytes,
+            filename=OUTPUT_PDF_FILENAME,
+            caption=caption,
+        )
+        if not ok:
+            err = f"url={url_err} | multipart={err}"
+
     log_event(
         "telegram_final_pdf_sent" if ok else "telegram_delivery_failed",
         source=event_source,
@@ -646,7 +686,11 @@ def redeem_payment_code(
         telegram_pdf_sent = bool(code_entry.get("telegram_pdf_sent"))
         if tg_user and not telegram_pdf_sent:
             try:
-                pdf_bytes = _pdf_from_form_snapshot(payload.form)
+                pdf_bytes: bytes | None = None
+                form_dump: dict[str, Any] = {}
+                if payload.form:
+                    form_dump = payload.form.model_dump()
+                    pdf_bytes = _pdf_from_form_snapshot(payload.form)
                 if pdf_bytes is None and redemption:
                     pdf_bytes = _pdf_from_form_snapshot(redemption)
                 if pdf_bytes is None:
@@ -656,8 +700,13 @@ def redeem_payment_code(
                         telegram_user_id=tg_user.id,
                         username=tg_user.username,
                         first_name=tg_user.first_name,
-                        meta={"code_last4": code_hint},
+                        meta={
+                            "code_last4": code_hint,
+                            "form_received": bool(payload.form),
+                            "form_fields": form_dump,
+                        },
                     )
+                # _send_final_pdf_to_telegram logs its own failure with the exact error.
                 if _send_final_pdf_to_telegram(
                     chat_id=tg_user.id,
                     pdf_bytes=pdf_bytes,
@@ -676,7 +725,7 @@ def redeem_payment_code(
                     telegram_user_id=tg_user.id,
                     username=tg_user.username,
                     first_name=tg_user.first_name,
-                    meta={"code_last4": code_hint, "error": str(exc)},
+                    meta={"code_last4": code_hint, "error": str(exc), "exception_type": type(exc).__name__},
                 )
         if tg_user:
             ok_msg, err_msg = send_telegram_message(
