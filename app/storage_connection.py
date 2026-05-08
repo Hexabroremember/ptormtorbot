@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any
+from urllib.parse import quote, unquote
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -13,15 +13,45 @@ DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
 SQLITE_PATH = DATA_DIR / "events.sqlite3"
 
 
+def _encode_credentials_in_pg_uri(url: str) -> str:
+    """Percent-encode user/password so ``@``, ``:``, etc. in passwords do not break the URI.
+
+    PostgreSQL URIs use the *last* ``@`` before the path as the boundary between
+    ``user:password`` and ``host:port``. Pasted Supabase passwords often contain
+    ``@`` (e.g. email-like passwords); without encoding, the host is parsed wrong.
+    """
+    if not url.startswith("postgresql://"):
+        return url
+    rest = url[len("postgresql://") :]
+    slash = rest.find("/")
+    if slash >= 0:
+        authority, tail = rest[:slash], rest[slash:]
+    else:
+        authority, tail = rest, ""
+    if "@" not in authority:
+        return url
+
+    userinfo, hostport = authority.rsplit("@", 1)
+    colon = userinfo.find(":")
+    if colon == -1:
+        user_enc = quote(unquote(userinfo), safe="")
+        return f"postgresql://{user_enc}@{hostport}{tail}"
+
+    user_raw, pwd_raw = userinfo[:colon], userinfo[colon + 1 :]
+    user_enc = quote(unquote(user_raw), safe="")
+    pwd_enc = quote(unquote(pwd_raw), safe="")
+    return f"postgresql://{user_enc}:{pwd_enc}@{hostport}{tail}"
+
+
 def _normalized_db_url() -> str:
     raw = (os.environ.get("DATABASE_URL") or os.environ.get("SUPABASE_DATABASE_URL") or "").strip()
     if raw.startswith("postgres://"):
         raw = raw.replace("postgres://", "postgresql://", 1)
-    return raw
+    return _encode_credentials_in_pg_uri(raw)
 
 
 def _validate_pg_conninfo(url: str) -> None:
-    """Catch common mistake: ``@`` inside the password without URL-encoding breaks the URI."""
+    """Reject obviously broken URIs after normalization."""
     import psycopg.conninfo
 
     try:
@@ -36,9 +66,8 @@ def _validate_pg_conninfo(url: str) -> None:
     host = (opts.get("host") or "").strip()
     if "@" in host:
         raise ValueError(
-            "DATABASE_URL looks malformed: hostname contains ``@``. "
-            "If your database password contains ``@`` (e.g. an email), replace each ``@`` in the "
-            "password segment with ``%40``, or set a new DB password with only letters and digits."
+            "DATABASE_URL still looks malformed after auto-encoding (hostname contains ``@``). "
+            "Reset the database password in Supabase or paste the URI exactly from the dashboard."
         )
 
 
