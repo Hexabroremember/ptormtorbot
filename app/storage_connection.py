@@ -20,6 +20,28 @@ def _normalized_db_url() -> str:
     return raw
 
 
+def _validate_pg_conninfo(url: str) -> None:
+    """Catch common mistake: ``@`` inside the password without URL-encoding breaks the URI."""
+    import psycopg.conninfo
+
+    try:
+        opts = psycopg.conninfo.conninfo_to_dict(url)
+    except Exception as exc:
+        raise ValueError(
+            "DATABASE_URL is not a valid PostgreSQL connection string. "
+            "Copy the URI from Supabase → Project Settings → Database, "
+            "and ensure special characters in the password are percent-encoded "
+            "(``@`` → ``%40``, ``:`` → ``%3A``, ``#`` → ``%23``)."
+        ) from exc
+    host = (opts.get("host") or "").strip()
+    if "@" in host:
+        raise ValueError(
+            "DATABASE_URL looks malformed: hostname contains ``@``. "
+            "If your database password contains ``@`` (e.g. an email), replace each ``@`` in the "
+            "password segment with ``%40``, or set a new DB password with only letters and digits."
+        )
+
+
 def use_postgres() -> bool:
     """True when a Postgres URL is configured (read at call time so ``load_dotenv`` applies)."""
     return bool(_normalized_db_url())
@@ -37,7 +59,18 @@ def connect_storage():
         import psycopg
         from psycopg.rows import dict_row
 
-        return psycopg.connect(url, row_factory=dict_row)
+        _validate_pg_conninfo(url)
+        try:
+            return psycopg.connect(url, row_factory=dict_row)
+        except psycopg.OperationalError as exc:
+            err = str(exc)
+            if "Name or service not known" in err and "@" in err:
+                raise ValueError(
+                    "PostgreSQL DNS error — hostname often broken when ``@`` appears inside the "
+                    "password in DATABASE_URL. Encode ``@`` as ``%40`` in the password, or use a "
+                    "password without ``@``. See Supabase → Database → Connection string."
+                ) from exc
+            raise
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
