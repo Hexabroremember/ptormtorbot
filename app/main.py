@@ -133,6 +133,12 @@ class MaintenanceModeRequest(BaseModel):
     enabled: bool
 
 
+class AdminIssueCodesRequest(BaseModel):
+    """Counts per type: key ``global`` and/or ``300`` … ``1500`` (tier ids)."""
+
+    bulk: dict[str, int] = Field(default_factory=dict)
+
+
 class CreateCryptoInvoiceRequest(BaseModel):
     price_ils: float = Field(..., gt=0, le=50_000)
     expiry_option: str | None = Field(default=None, max_length=32)
@@ -490,12 +496,68 @@ def admin_payment_codes(_: AdminIdentity = Depends(require_admin)) -> dict:
 
 
 @app.post("/api/admin/codes/issue")
-def admin_issue_payment_code(_: AdminIdentity = Depends(require_admin)) -> dict[str, str]:
+def admin_issue_payment_codes(
+    payload: AdminIssueCodesRequest,
+    identity: AdminIdentity = Depends(require_admin),
+) -> dict[str, Any]:
+    from app.payment_code_meta import MAX_BULK_PER_KEY, MAX_BULK_TOTAL, meta_for_issue_key
     from app.payment_codes_store import issue_new_code
 
-    code = issue_new_code()
-    log_event("payment_code_issued", source="admin")
-    return {"code": code}
+    raw = payload.bulk or {}
+    counts: dict[str, int] = {}
+    for k_raw, v_raw in raw.items():
+        key = str(k_raw).strip()
+        norm_key = "global" if key.lower() == "global" else key
+        try:
+            n = int(v_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"invalid_count:{key}") from None
+        if n < 0:
+            raise HTTPException(status_code=400, detail="negative_count")
+        if n > MAX_BULK_PER_KEY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"max_{MAX_BULK_PER_KEY}_per_type",
+            )
+        try:
+            meta_for_issue_key(norm_key)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"unknown_issue_key:{key}") from None
+        if n:
+            counts[norm_key] = counts.get(norm_key, 0) + n
+
+    if not counts:
+        if not raw:
+            counts = {"global": 1}
+        else:
+            raise HTTPException(status_code=400, detail="empty_bulk")
+
+    total = sum(counts.values())
+    if total > MAX_BULK_TOTAL:
+        raise HTTPException(status_code=400, detail=f"max_total_{MAX_BULK_TOTAL}")
+
+    items: list[dict[str, Any]] = []
+    for key, n in counts.items():
+        meta = meta_for_issue_key(key)
+        for _ in range(n):
+            code = issue_new_code(meta=meta)
+            items.append(
+                {
+                    "code": code,
+                    "issue_scope": meta.get("issue_scope"),
+                    "issue_label": meta.get("issue_label"),
+                    "expiry_option": meta.get("expiry_option"),
+                }
+            )
+
+    tg_id = identity.telegram_user.id if identity.telegram_user else None
+    log_event(
+        "payment_codes_bulk_issued",
+        source="admin_panel",
+        telegram_user_id=tg_id,
+        meta={"counts": counts, "total": len(items)},
+    )
+    return {"items": items, "counts": counts}
 
 
 @app.get("/api/admin/control")

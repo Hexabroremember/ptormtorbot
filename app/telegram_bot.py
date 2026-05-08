@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 import re
@@ -44,6 +45,8 @@ from app.main import (
 )
 from app.activity_store import log_event
 from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess, mint_user_tg_sess
+from app.payment_code_meta import TIER_LABELS as CODE_TIER_LABELS
+from app.payment_code_meta import heading_for_issue_key, meta_for_issue_key
 from app.public_url import effective_public_base_url
 
 load_dotenv(ROOT_DIR / ".env", override=False)
@@ -167,15 +170,6 @@ BTN_RESTART = "🔄 התחלה מחדש"
 BTN_ISSUE_FORM = "📋 הנפקת פטור מתור"
 BTN_HELP = "❓ עזרה"
 
-# הנפקת קודים — תוויות תקופה (מיושר עם המיני־אפ)
-CODE_TIER_LABELS: dict[str, str] = {
-    "300": "שנה · ₪300",
-    "500": "3 שנים · ₪500",
-    "900": "5 שנים · ₪900",
-    "1200": "10 שנים · ₪1200",
-    "1500": "לצמיתות · ₪1500",
-}
-
 
 def code_issue_inline_keyboard() -> InlineKeyboardMarkup:
     """בחירת סוג קוד: גלובלי או לפי חבילת תוקף."""
@@ -281,23 +275,15 @@ async def callback_issue_payment_code(
     heading: str
     try:
         if suffix == "g":
-            meta = {
-                "issue_scope": "global",
-                "issue_label": "קוד גלובלי — כל תקופות התוקף",
-            }
-            heading = "קוד גלובלי — כל תקופות התוקף"
+            issue_key = "global"
         elif suffix in CODE_TIER_LABELS:
-            meta = {
-                "issue_scope": "tier",
-                "expiry_option": suffix,
-                "price_ils": float(suffix),
-                "issue_label": CODE_TIER_LABELS[suffix],
-            }
-            heading = CODE_TIER_LABELS[suffix]
+            issue_key = suffix
         else:
             await q.answer(text="בחירה לא תקינה.", show_alert=True)
             return
 
+        meta = meta_for_issue_key(issue_key)
+        heading = heading_for_issue_key(issue_key)
         code = issue_new_code(meta=meta)
         log_event(
             "payment_code_issued",
@@ -315,7 +301,7 @@ async def callback_issue_payment_code(
         await q.answer(text="שגיאה ביצירת הקוד.", show_alert=True)
         if q.message:
             await q.message.reply_text(
-                f"❌ <b>שגיאה ביצירת הקוד</b>\n\n<code>{exc}</code>",
+                f"❌ <b>שגיאה ביצירת הקוד</b>\n\n<pre>{html.escape(str(exc))}</pre>",
                 parse_mode="HTML",
             )
         return
@@ -324,8 +310,8 @@ async def callback_issue_payment_code(
     if q.message:
         await q.message.reply_text(
             "✅ <b>קוד אישור תשלום הונפק</b>\n\n"
-            f"<b>סוג:</b> {heading}\n\n"
-            f"<code>{code}</code>\n\n"
+            f"<b>סוג:</b> {html.escape(heading)}\n\n"
+            f"<pre>{html.escape(code)}</pre>\n\n"
             "יש להעביר את הקוד ללקוח לאחר קבלת התשלום בפועל.\n"
             "הקוד מיועד לשימוש חד־פעמי בלבד.",
             parse_mode="HTML",

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote, unquote
 
+
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("DATA_DIR") or str(ROOT_DIR / "data"))
@@ -96,6 +100,26 @@ def _conninfo_prefer_ipv4(url: str) -> str:
         return url
 
 
+def _warn_if_supabase_direct_host(url: str) -> None:
+    """Log once: direct ``db.*.supabase.co`` is IPv6-first; Railway often needs the pooler URI."""
+    import psycopg.conninfo as ci
+
+    try:
+        opts = ci.conninfo_to_dict(url)
+    except Exception:
+        return
+    host = (opts.get("host") or "").strip()
+    if not re.match(r"^db\.[a-z0-9]+\.supabase\.co$", host, re.I):
+        return
+    logger.warning(
+        "DATABASE_URL points at Supabase direct host %s (IPv6-first). Many clouds (e.g. Railway) "
+        "cannot reach it. In Supabase Dashboard → Connect (or Database → Connection string), copy "
+        "the Session pooler or Transaction pooler URI — host must contain pooler.supabase.com. "
+        "Docs: https://supabase.com/docs/guides/platform/ipv4-address",
+        host,
+    )
+
+
 def _validate_pg_conninfo(url: str) -> None:
     """Reject obviously broken URIs after normalization."""
     import psycopg.conninfo
@@ -135,6 +159,7 @@ def connect_storage():
         from psycopg.rows import dict_row
 
         _validate_pg_conninfo(url)
+        _warn_if_supabase_direct_host(url)
         conninfo = _conninfo_prefer_ipv4(url)
         try:
             return psycopg.connect(conninfo, row_factory=dict_row)
@@ -148,10 +173,14 @@ def connect_storage():
                 ) from exc
             if "Network is unreachable" in err:
                 raise ValueError(
-                    "PostgreSQL connection failed (network unreachable). The app already prefers IPv4 "
-                    "when an A record exists (DATABASE_PREFER_IPV4, default on). If this persists on "
-                    "Railway, paste Supabase's Transaction or Session pooler URI "
-                    "(host contains pooler.supabase.com; often port 6543) into DATABASE_URL."
+                    "PostgreSQL connection failed (network unreachable). Your DATABASE_URL likely "
+                    "still uses Supabase *direct* host db.<project>.supabase.co — that endpoint is "
+                    "IPv6-first and unreachable from Railway. Remove it and paste the full URI from "
+                    "Supabase Dashboard → Connect → Connection string: choose **Session pooler** "
+                    "(port 5432) or **Transaction pooler** (port 6543); the host must be "
+                    "*.pooler.supabase.com (IPv4). Keep sslmode=require if present. "
+                    "Optional paid alternative: IPv4 add-on for direct connections. "
+                    "https://supabase.com/docs/guides/platform/ipv4-address"
                 ) from exc
             raise
     DATA_DIR.mkdir(parents=True, exist_ok=True)

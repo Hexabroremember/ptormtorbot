@@ -169,6 +169,18 @@ function formatDate(value) {
   }
 }
 
+/** סוגי הנפקה — תואמים ל־`/api/admin/codes/issue` ולמיני־אפ */
+const ISSUE_KEYS = ["global", "300", "500", "900", "1200", "1500"];
+
+const ISSUE_LABELS = {
+  global: "קוד גלובלי — כל תקופות התוקף",
+  "300": "שנה · ₪300",
+  "500": "3 שנים · ₪500",
+  "900": "5 שנים · ₪900",
+  "1200": "10 שנים · ₪1200",
+  "1500": "לצמיתות · ₪1500",
+};
+
 const FORM_FIELD_LABELS = {
   hebrew_full_name: "שם בעברית",
   english_full_name: "שם באנגלית",
@@ -244,7 +256,10 @@ export default function AdminPanel() {
   const [secret, setSecret] = useState(storedAdminSecret());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [newCode, setNewCode] = useState("");
+  const [issueCounts, setIssueCounts] = useState(() =>
+    Object.fromEntries(ISSUE_KEYS.map((k) => [k, ""])),
+  );
+  const [issuedBatch, setIssuedBatch] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tgWaiting, setTgWaiting] = useState(false);
   const [hasInitData, setHasInitData] = useState(false);
@@ -342,12 +357,30 @@ export default function AdminPanel() {
     load();
   };
 
-  const issueCode = async () => {
+  const issueCodes = async () => {
     setBusy(true);
     setError("");
     try {
-      const data = await adminFetch("/api/admin/codes/issue", { method: "POST", body: "{}" });
-      setNewCode(data.code);
+      const bulk = {};
+      for (const k of ISSUE_KEYS) {
+        const raw = String(issueCounts[k] ?? "").trim();
+        if (!raw) continue;
+        const v = parseInt(raw, 10);
+        if (!Number.isFinite(v) || v <= 0) {
+          setError("נא להזין מספר חיובי בלבד לכל סוג שמולא.");
+          return;
+        }
+        bulk[k] = v;
+      }
+      if (Object.keys(bulk).length === 0) {
+        setError("נא להזין כמות (מספר חיובי) לפחות לסוג קוד אחד.");
+        return;
+      }
+      const data = await adminFetch("/api/admin/codes/issue", {
+        method: "POST",
+        body: JSON.stringify({ bulk }),
+      });
+      setIssuedBatch(data);
       await load();
     } catch (e) {
       setError(e.message || String(e));
@@ -673,24 +706,79 @@ export default function AdminPanel() {
           <div className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
             <h2 className="mb-4 text-lg font-black">בקרה מהירה</h2>
             <div className="space-y-3">
-              <button
-                type="button"
-                onClick={issueCode}
-                disabled={busy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-60"
-              >
-                <KeyRound size={18} />
-                הנפק קוד תשלום
-              </button>
-              {newCode ? (
+              <div>
+                <p className="mb-2 text-xs font-bold text-slate-600">
+                  הנפקת קודי תשלום (גלובלי / לפי תקופה · מרובה)
+                </p>
+                <div className="mb-3 max-h-52 space-y-2 overflow-y-auto pe-1">
+                  {ISSUE_KEYS.map((k) => (
+                    <label
+                      key={k}
+                      className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 text-sm last:border-0"
+                    >
+                      <span className="min-w-0 flex-1 text-right leading-snug">
+                        {ISSUE_LABELS[k]}
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        inputMode="numeric"
+                        placeholder="0"
+                        dir="ltr"
+                        className="w-[4.5rem] shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center font-mono text-sm outline-none focus:border-emerald-400"
+                        value={issueCounts[k]}
+                        onChange={(e) =>
+                          setIssueCounts((prev) => ({ ...prev, [k]: e.target.value }))
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
                 <button
                   type="button"
-                  onClick={() => copyText(newCode)}
-                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 font-mono text-sm font-bold text-emerald-800"
+                  onClick={issueCodes}
+                  disabled={busy}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-60"
                 >
-                  <span>{newCode}</span>
-                  <Copy size={16} />
+                  <KeyRound size={18} />
+                  הנפק קודים
                 </button>
+              </div>
+              {issuedBatch?.items?.length ? (
+                <div className="max-h-48 overflow-auto rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs">
+                  <p className="mb-2 font-bold text-emerald-900">
+                    הונפקו {issuedBatch.items.length} קודים
+                    {issuedBatch.counts && typeof issuedBatch.counts === "object" ? (
+                      <span className="ms-1 font-normal text-emerald-800">
+                        (
+                        {Object.entries(issuedBatch.counts)
+                          .map(([key, n]) => `${ISSUE_LABELS[key] || key}: ${n}`)
+                          .join(" · ")}
+                        )
+                      </span>
+                    ) : null}
+                  </p>
+                  <ul className="space-y-1.5 text-right">
+                    {issuedBatch.items.map((row, i) => (
+                      <li key={`${row.code}-${i}`}>
+                        {row.issue_label ? (
+                          <div className="mb-0.5 text-[11px] text-slate-600">{row.issue_label}</div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => copyText(row.code)}
+                          className="flex w-full items-start justify-between gap-2 rounded-lg border border-emerald-100 bg-white/90 px-2 py-1.5 text-left transition hover:bg-white"
+                        >
+                          <span className="min-w-0 flex-1 break-all font-mono text-sm font-bold text-emerald-950 ltr">
+                            {row.code}
+                          </span>
+                          <Copy size={14} className="mt-0.5 shrink-0 text-emerald-700" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               ) : null}
               <button
                 type="button"
