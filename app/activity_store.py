@@ -303,3 +303,58 @@ def _event_row_to_dict(row: Any) -> dict[str, Any]:
         "first_name": row["first_name"],
         "meta": meta,
     }
+
+
+def list_payment_redeems_for_user(telegram_user_id: int, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Rows for ``payment_code_redeemed`` events (purchase completed via withdraw code)."""
+    init_db()
+    limit = max(1, min(limit, 100))
+    with connect_storage() as conn:
+        rows = conn.execute(
+            qp(
+                """
+                SELECT id, ts, meta_json
+                FROM events
+                WHERE event_type = 'payment_code_redeemed'
+                  AND telegram_user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """
+            ),
+            (telegram_user_id, limit),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            meta = json.loads(row["meta_json"] or "{}")
+        except json.JSONDecodeError:
+            meta = {}
+        redemption = meta.get("redemption") if isinstance(meta.get("redemption"), dict) else {}
+        out.append({"id": row["id"], "ts": row["ts"], "meta": meta, "redemption": redemption})
+    return out
+
+
+def get_payment_redeem_event_for_user(event_id: int, telegram_user_id: int) -> dict[str, Any] | None:
+    """Single redeem event if it belongs to the user."""
+    init_db()
+    with connect_storage() as conn:
+        row = conn.execute(
+            qp(
+                """
+                SELECT id, ts, meta_json
+                FROM events
+                WHERE id = ?
+                  AND telegram_user_id = ?
+                  AND event_type = 'payment_code_redeemed'
+                """
+            ),
+            (event_id, telegram_user_id),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        meta = json.loads(row["meta_json"] or "{}")
+    except json.JSONDecodeError:
+        meta = {}
+    redemption = meta.get("redemption") if isinstance(meta.get("redemption"), dict) else {}
+    return {"id": row["id"], "ts": row["ts"], "meta": meta, "redemption": redemption}

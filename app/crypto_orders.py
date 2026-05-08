@@ -222,6 +222,49 @@ def mark_pdf_sent(order_id: str) -> None:
         conn.commit()
 
 
+def list_paid_orders_for_user(telegram_user_id: int, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Paid crypto orders for replay PDF download."""
+    init_orders_table()
+    limit = max(1, min(limit, 100))
+    with connect_storage() as conn:
+        rows = conn.execute(
+            qp(
+                """
+                SELECT order_id, created_at, updated_at, price_ils, expiry_option,
+                       payment_code, form_json
+                FROM crypto_orders
+                WHERE telegram_user_id = ?
+                  AND status = 'paid'
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """
+            ),
+            (telegram_user_id, limit),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        form: dict[str, Any] | None = None
+        fj = d.get("form_json")
+        if isinstance(fj, str) and fj.strip():
+            try:
+                parsed = json.loads(fj)
+                form = parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                form = None
+        out.append(
+            {
+                "order_id": d["order_id"],
+                "ts": d.get("updated_at") or d.get("created_at"),
+                "price_ils": d.get("price_ils"),
+                "expiry_option": d.get("expiry_option"),
+                "payment_code": d.get("payment_code"),
+                "form": form,
+            }
+        )
+    return out
+
+
 def list_orders(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
     init_orders_table()
     with connect_storage() as conn:

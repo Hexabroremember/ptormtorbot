@@ -20,7 +20,14 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
-from app.activity_store import list_events, list_user_directory, log_event, summary as activity_summary
+from app.activity_store import (
+    get_payment_redeem_event_for_user,
+    list_events,
+    list_payment_redeems_for_user,
+    list_user_directory,
+    log_event,
+    summary as activity_summary,
+)
 from app.admin_auth import (
     AdminIdentity,
     effective_admin_secret,
@@ -28,7 +35,14 @@ from app.admin_auth import (
     resolve_telegram_webapp_user,
 )
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
-from app.crypto_orders import create_order, get_order, list_orders, mark_paid, mark_pdf_sent
+from app.crypto_orders import (
+    create_order,
+    get_order,
+    list_orders,
+    list_paid_orders_for_user,
+    mark_paid,
+    mark_pdf_sent,
+)
 from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
 from app.payment_codes_store import (
     get_code_entry,
@@ -37,6 +51,7 @@ from app.payment_codes_store import (
     normalize_code,
     redeem_code,
 )
+from app.payment_code_meta import TIER_LABELS as EXPIRY_TIER_LABELS
 from app.pdf_download_cache import get_pdf_record, register_pdf_bytes
 from app.public_url import effective_public_base_url
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
@@ -164,6 +179,10 @@ class SavedFormRequest(BaseModel):
     form: SavedFormSnapshot
     telegram_init_data: str | None = Field(default=None, max_length=16000)
     telegram_user_session: str | None = Field(default=None, max_length=1000)
+
+
+class PurchaseHistoryPdfRequest(BaseModel):
+    ref: str = Field(..., min_length=6, max_length=160)
 
 
 class RateLimitOverrideRequest(BaseModel):
@@ -420,6 +439,104 @@ def delete_my_form(
     return out
 
 
+@app.get("/api/my-purchase-history")
+def my_purchase_history(
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+    tg_user_sess: str | None = Query(default=None),
+) -> dict[str, Any]:
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    return _purchase_history_payload(tg_user.id)
+
+
+@app.post("/api/my-purchase-history/final-pdf")
+def purchase_history_final_pdf(
+    payload: PurchaseHistoryPdfRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+    tg_user_sess: str | None = Query(default=None),
+) -> Response:
+    if maintenance_mode_enabled():
+        raise HTTPException(status_code=503, detail="maintenance_mode")
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    check_rate_limit("final_pdf", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
+    ref = payload.ref.strip()
+    redemption: dict[str, Any]
+    if ref.startswith("redeem:"):
+        rest = ref.split(":", 1)[1]
+        try:
+            eid = int(rest)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_ref") from None
+        ev = get_payment_redeem_event_for_user(eid, tg_user.id)
+        if ev is None:
+            raise HTTPException(status_code=404, detail="purchase_not_found")
+        redemption = ev.get("redemption") or {}
+    elif ref.startswith("crypto:"):
+        oid = ref.split(":", 1)[1].strip()
+        if not oid:
+            raise HTTPException(status_code=400, detail="invalid_ref")
+        order = get_order(oid)
+        if (
+            order is None
+            or order.get("telegram_user_id") != tg_user.id
+            or order.get("status") != "paid"
+        ):
+            raise HTTPException(status_code=404, detail="purchase_not_found")
+        redemption = order.get("form") or {}
+    else:
+        raise HTTPException(status_code=400, detail="invalid_ref")
+
+    snap = _normalize_redemption_for_pdf(redemption)
+    if snap is None:
+        raise HTTPException(status_code=400, detail="incomplete_form_snapshot")
+    pdf_bytes = _pdf_from_form_snapshot(snap)
+    if pdf_bytes is None:
+        raise HTTPException(status_code=500, detail="could_not_build_pdf")
+
+    dl_token = register_pdf_bytes(pdf_bytes, user_meta=ident)
+    headers = {
+        "Content-Disposition": f'inline; filename="{OUTPUT_PDF_FILENAME}"',
+        "X-Pdf-Download-Path": f"/pdf-download/{dl_token}",
+    }
+    log_event(
+        "pdf_generated",
+        source="mini_app",
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
+        meta={
+            **_request_meta(request, watermark=False),
+            "payment_status": "paid_final",
+            "replay_ref": ref,
+            "form": {
+                "hebrew_full_name": snap.get("hebrew_full_name"),
+                "english_full_name": snap.get("english_full_name"),
+                "id_number": snap.get("id_number"),
+                "expiration_date": snap.get("expiration_date"),
+            },
+        },
+    )
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+
+
 @app.get("/api/admin/debug")
 def admin_debug(
     request: Request,
@@ -626,6 +743,87 @@ def _pdf_from_form_snapshot(form: RedeemFormSnapshot | dict[str, Any] | None) ->
         expiration_date=str(raw["expiration_date"]).strip(),
         watermark=False,
     )
+
+
+def _normalize_redemption_for_pdf(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Strip redemption / stored order form to fields required for final PDF."""
+    if not raw:
+        return None
+    he = str(raw.get("hebrew_full_name") or "").strip()
+    en = str(raw.get("english_full_name") or "").strip()
+    idn = str(raw.get("id_number") or "").strip()
+    exp = str(raw.get("expiration_date") or "").strip()
+    if not (he and en and idn and exp):
+        return None
+    out: dict[str, Any] = {
+        "hebrew_full_name": he,
+        "english_full_name": en,
+        "id_number": idn,
+        "expiration_date": exp,
+    }
+    eo = raw.get("expiry_option")
+    if eo is not None and str(eo).strip():
+        out["expiry_option"] = str(eo).strip()
+    return out
+
+
+def _prefill_dict_from_server_form(red: dict[str, Any]) -> dict[str, str]:
+    """Mini App ``formData`` keys from redemption/order form snapshot."""
+    return {
+        "fullName": str(red.get("hebrew_full_name") or "").strip(),
+        "fullNameEn": str(red.get("english_full_name") or "").strip(),
+        "idNumber": str(red.get("id_number") or "").strip(),
+        "expiryOption": str(red.get("expiry_option") or "").strip(),
+        "birthDate": "",
+        "idIssueDate": "",
+    }
+
+
+def _purchase_history_payload(telegram_user_id: int) -> dict[str, Any]:
+    redeems = list_payment_redeems_for_user(telegram_user_id, limit=40)
+    cryptos = list_paid_orders_for_user(telegram_user_id, limit=40)
+    items: list[dict[str, Any]] = []
+    for ev in redeems:
+        red = ev.get("redemption") or {}
+        snap = _normalize_redemption_for_pdf(red)
+        title = (red.get("hebrew_full_name") or "").strip() or "פטור מתור"
+        sub = (red.get("expiration_date") or "").strip()
+        items.append(
+            {
+                "ref": f"redeem:{ev['id']}",
+                "kind": "withdraw_code",
+                "ts": ev["ts"],
+                "title": title[:120],
+                "subtitle": sub[:120],
+                "downloadable": snap is not None,
+                "prefill": _prefill_dict_from_server_form(red),
+            }
+        )
+    for co in cryptos:
+        form = co.get("form") or {}
+        snap = _normalize_redemption_for_pdf(form)
+        title = (form.get("hebrew_full_name") or "").strip() or "פטור מתור"
+        po = co.get("price_ils")
+        eo = co.get("expiry_option")
+        parts: list[str] = []
+        if po is not None:
+            parts.append(f"₪{int(po)}")
+        if eo:
+            parts.append(EXPIRY_TIER_LABELS.get(str(eo), str(eo)))
+        subtitle = " · ".join(parts) if parts else ""
+        items.append(
+            {
+                "ref": f"crypto:{co['order_id']}",
+                "kind": "crypto",
+                "ts": co["ts"] or "",
+                "title": title[:120],
+                "subtitle": subtitle[:120],
+                "downloadable": snap is not None,
+                "prefill": _prefill_dict_from_server_form(form),
+            }
+        )
+    items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
+    return {"items": items[:50]}
 
 
 def _send_final_pdf_to_telegram(

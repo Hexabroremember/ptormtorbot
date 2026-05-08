@@ -16,7 +16,6 @@ import {
   Apple,
   Ticket,
   Download,
-  Trash2,
 } from 'lucide-react';
 
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -275,13 +274,16 @@ const content = {
     previewReadyBanner: "הטופס הופק בהצלחה! עברו על התמונה לפני מעבר לתשלום.",
     previewImageNote:
       "זוהי תצוגת תמונה בלבד של העמוד הראשון. הקובץ המלא יהיה זמין להורדה לאחר אישור התשלום.",
-    savedFormsTitle: "טפסים קודמים",
-    savedFormsHint: "אפשר לטעון טופס שמילאתם בעבר ולהמשיך בתהליך מקוצר.",
-    savedFormsLoad: "טען",
-    savedFormsDelete: "מחק",
-    savedFormsEmpty: "אין עדיין טפסים שמורים למשתמש הזה.",
-    savedFormsSaved: "נשמר אוטומטית",
-    savedFormsSaving: "שומר…",
+    purchaseHistoryTitle: "רכישות שהושלמו",
+    purchaseHistoryHint:
+      "טפסים לאחר תשלום (קוד אישור או תשלום קריפטו). אפשר להוריד שוב את קובץ ה־PDF הסופי או לטעון את הפרטים לטופס חדש.",
+    purchaseHistoryEmpty: "עדיין אין רכישות מושלמות — לאחר תשלום יופיעו כאן.",
+    purchaseHistoryLoading: "טוען היסטוריה…",
+    purchaseHistoryDownload: "הורד PDF",
+    purchaseHistoryLoadForm: "טען לטופס",
+    purchaseHistoryKindWithdraw: "קוד אישור",
+    purchaseHistoryKindCrypto: "קריפטו",
+    purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -337,13 +339,16 @@ const content = {
     previewReadyBanner: "تم إنشاء النموذج. راجعوا الصورة قبل الدفع.",
     previewImageNote:
       "معاينة صورة للصفحة الأولى فقط (مع العلامة المائية). الملف الكامل يُتاح بعد تأكيد الدفع.",
-    savedFormsTitle: "نماذج سابقة",
-    savedFormsHint: "يمكن تحميل نموذج سابق ومتابعة العملية بسرعة.",
-    savedFormsLoad: "تحميل",
-    savedFormsDelete: "حذف",
-    savedFormsEmpty: "لا توجد نماذج محفوظة لهذا المستخدم بعد.",
-    savedFormsSaved: "تم الحفظ تلقائيًا",
-    savedFormsSaving: "جاري الحفظ…",
+    purchaseHistoryTitle: "مشتريات مكتملة",
+    purchaseHistoryHint:
+      "نماذج بعد الدفع (رمز تأكيد أو دفع كريبتو). يمكن تنزيل ملف PDF النهائي مجددًا أو تحميل البيانات إلى نموذج جديد.",
+    purchaseHistoryEmpty: "لا توجد مشتريات مكتملة بعد — ستظهر هنا بعد الدفع.",
+    purchaseHistoryLoading: "جاري التحميل…",
+    purchaseHistoryDownload: "تنزيل PDF",
+    purchaseHistoryLoadForm: "تحميل إلى النموذج",
+    purchaseHistoryKindWithdraw: "رمز تأكيد",
+    purchaseHistoryKindCrypto: "كريبتو",
+    purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
   },
 };
 
@@ -364,10 +369,11 @@ const App = () => {
   const [finalPdfDownloading, setFinalPdfDownloading] = useState(false);
 
   const [step1Error, setStep1Error] = useState(null);
-  const [savedForms, setSavedForms] = useState([]);
-  const [savedFormsLoaded, setSavedFormsLoaded] = useState(false);
-  const [savedFormsStatus, setSavedFormsStatus] = useState("idle"); // idle | loading | saving | saved
-  const [activeSavedFormId, setActiveSavedFormId] = useState(null);
+  const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [purchaseHistoryLoaded, setPurchaseHistoryLoaded] = useState(false);
+  const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState(false);
+  const [purchaseHistoryError, setPurchaseHistoryError] = useState(null);
+  const [purchasePdfDownloading, setPurchasePdfDownloading] = useState(null);
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -382,7 +388,6 @@ const App = () => {
   const [pdfError, setPdfError] = useState(null);
 
   const cachedPreviewSigRef = useRef(null);
-  const suppressAutosaveRef = useRef(false);
 
   const previewFormSignature = useMemo(
     () =>
@@ -405,78 +410,50 @@ const App = () => {
     window.Telegram?.WebApp?.ready?.();
   }, []);
 
-  const loadSavedForms = async () => {
+  const loadPurchaseHistory = async () => {
+    setPurchaseHistoryLoading(true);
+    setPurchaseHistoryError(null);
     try {
-      setSavedFormsStatus("loading");
       const initData = telegramInitData();
-      const res = await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(), initData), {
+      const res = await fetch(appendTelegramContextQuery(buildPurchaseHistoryApiUrl(), initData), {
         headers: jsonHeaders(),
       });
       if (!res.ok) {
-        setSavedFormsLoaded(true);
-        setSavedFormsStatus("idle");
+        setPurchaseHistory([]);
+        setPurchaseHistoryLoaded(true);
+        setPurchaseHistoryError("");
         return;
       }
       const data = await res.json();
-      setSavedForms(Array.isArray(data.items) ? data.items : []);
-      setSavedFormsLoaded(true);
-      setSavedFormsStatus("idle");
+      setPurchaseHistory(Array.isArray(data.items) ? data.items : []);
+      setPurchaseHistoryLoaded(true);
     } catch {
-      setSavedFormsLoaded(true);
-      setSavedFormsStatus("idle");
-    }
-  };
-
-  const saveCurrentForm = async ({ silent = true } = {}) => {
-    const hasAnyValue = Object.values(formData).some((v) => String(v || "").trim());
-    if (!hasAnyValue) return null;
-    try {
-      setSavedFormsStatus("saving");
-      const initData = telegramInitData();
-      const res = await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(), initData), {
-        method: "PUT",
-        headers: jsonHeaders(),
-        body: JSON.stringify({
-          id: activeSavedFormId,
-          form: formData,
-          telegram_init_data: initData || "",
-          telegram_user_session: storedTelegramUserSession(),
-        }),
-      });
-      if (!res.ok) {
-        setSavedFormsStatus("idle");
-        return null;
-      }
-      const row = await res.json();
-      setActiveSavedFormId(row.id);
-      setSavedForms((prev) => {
-        const rest = prev.filter((item) => item.id !== row.id);
-        return [row, ...rest].slice(0, 15);
-      });
-      setSavedFormsStatus("saved");
-      if (!silent) setTimeout(() => setSavedFormsStatus("idle"), 1200);
-      return row;
-    } catch {
-      setSavedFormsStatus("idle");
-      return null;
+      setPurchaseHistory([]);
+      setPurchaseHistoryLoaded(true);
+      setPurchaseHistoryError("");
+    } finally {
+      setPurchaseHistoryLoading(false);
     }
   };
 
   useEffect(() => {
-    loadSavedForms();
+    loadPurchaseHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!savedFormsLoaded || suppressAutosaveRef.current) return undefined;
-    const hasAnyValue = Object.values(formData).some((v) => String(v || "").trim());
-    if (!hasAnyValue) return undefined;
-    const timer = window.setTimeout(() => {
-      saveCurrentForm({ silent: true });
-    }, 1500);
-    return () => window.clearTimeout(timer);
+    if (paymentApproved) {
+      loadPurchaseHistory();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData, savedFormsLoaded]);
+  }, [paymentApproved]);
+
+  useEffect(() => {
+    if (cryptoStatus === "paid") {
+      loadPurchaseHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cryptoStatus]);
 
   useEffect(() => {
     if (currentStep === 2) {
@@ -507,9 +484,14 @@ const App = () => {
     return base ? `${base}/redeem-payment-code` : "/redeem-payment-code";
   };
 
-  const buildSavedFormsApiUrl = (suffix = "") => {
+  const buildPurchaseHistoryApiUrl = () => {
     const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    return base ? `${base}/api/my-saved-forms${suffix}` : `/api/my-saved-forms${suffix}`;
+    return base ? `${base}/api/my-purchase-history` : `/api/my-purchase-history`;
+  };
+
+  const buildPurchaseHistoryPdfUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-purchase-history/final-pdf` : `/api/my-purchase-history/final-pdf`;
   };
 
   useEffect(() => {
@@ -614,17 +596,17 @@ const App = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleLoadSavedForm = (saved) => {
-    suppressAutosaveRef.current = true;
-    setActiveSavedFormId(saved.id);
+  const handleLoadPurchaseIntoForm = (item) => {
+    const p = item?.prefill;
+    if (!p) return;
     setFormData((prev) => ({
       ...prev,
-      fullName: saved.form?.fullName || "",
-      fullNameEn: saved.form?.fullNameEn || "",
-      idNumber: saved.form?.idNumber || "",
-      expiryOption: saved.form?.expiryOption || "",
-      birthDate: saved.form?.birthDate || "",
-      idIssueDate: saved.form?.idIssueDate || "",
+      fullName: p.fullName || "",
+      fullNameEn: p.fullNameEn || "",
+      idNumber: p.idNumber || "",
+      expiryOption: p.expiryOption || "",
+      birthDate: p.birthDate || "",
+      idIssueDate: p.idIssueDate || "",
     }));
     setPreviewImageUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
@@ -635,23 +617,7 @@ const App = () => {
     setCryptoSelected(false);
     setPaymentCodeInput("");
     setPaymentCodeError(null);
-    setTimeout(() => {
-      suppressAutosaveRef.current = false;
-    }, 0);
-  };
-
-  const handleDeleteSavedForm = async (id) => {
-    try {
-      const initData = telegramInitData();
-      await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(`/${encodeURIComponent(id)}`), initData), {
-        method: "DELETE",
-        headers: jsonHeaders(),
-      });
-      setSavedForms((prev) => prev.filter((item) => item.id !== id));
-      if (activeSavedFormId === id) setActiveSavedFormId(null);
-    } catch {
-      /* ignore */
-    }
+    setStep1Error(null);
   };
 
   const handleNext = async () => {
@@ -662,9 +628,7 @@ const App = () => {
         return;
       }
       setStep1Error(null);
-      /* Don’t block navigation on saved-forms PUT — step 2 reads live ``formData``; autosave also runs in background. */
       setCurrentStep(2);
-      void saveCurrentForm({ silent: false });
       return;
     }
     if (currentStep < 3) {
@@ -769,6 +733,66 @@ const App = () => {
       /* ignore */
     }
     return "";
+  };
+
+  const handleDownloadPurchasePdf = async (item) => {
+    if (!item?.downloadable || !item?.ref) {
+      setPurchaseHistoryError(t.purchaseHistoryUnavailable);
+      return;
+    }
+    setPurchasePdfDownloading(item.ref);
+    setPurchaseHistoryError(null);
+    try {
+      const res = await fetch(
+        appendTelegramContextQuery(buildPurchaseHistoryPdfUrl(), telegramInitData()),
+        {
+          method: "POST",
+          headers: jsonHeaders(),
+          body: JSON.stringify({ ref: item.ref }),
+        },
+      );
+      if (!res.ok) {
+        const detail = await parseJsonDetail(res);
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+
+      const dlHeader = res.headers.get("X-Pdf-Download-Path");
+      const httpsHref = resolvePdfDownloadHref(dlHeader, "");
+
+      const tg = window.Telegram?.WebApp;
+      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+      if (httpsHref) {
+        if (typeof tg?.downloadFile === "function") {
+          tg.downloadFile(httpsHref, "PatorMeTor.pdf");
+        } else if (typeof tg?.openLink === "function") {
+          tg.openLink(httpsHref);
+        } else {
+          window.open(httpsHref, "_blank", "noopener,noreferrer");
+        }
+        res.blob().then((b) => URL.revokeObjectURL(URL.createObjectURL(b))).catch(() => {});
+        return;
+      }
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      if (isIOS) {
+        window.open(blobUrl, "_blank");
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+      } else {
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = "PatorMeTor.pdf";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 2_000);
+      }
+    } catch (e) {
+      setPurchaseHistoryError(e.message || String(e));
+    } finally {
+      setPurchasePdfDownloading(null);
+    }
   };
 
   const handleRedeemPaymentCode = async () => {
@@ -911,52 +935,63 @@ const App = () => {
             <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
               <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h3 className="font-bold text-slate-800">{t.savedFormsTitle}</h3>
-                  <p className="text-xs text-slate-600">{t.savedFormsHint}</p>
+                  <h3 className="font-bold text-slate-800">{t.purchaseHistoryTitle}</h3>
+                  <p className="text-xs text-slate-600">{t.purchaseHistoryHint}</p>
                 </div>
-                <span className="text-xs font-bold text-blue-700">
-                  {savedFormsStatus === "saving"
-                    ? t.savedFormsSaving
-                    : savedFormsStatus === "saved"
-                      ? t.savedFormsSaved
-                      : ""}
-                </span>
+                {purchaseHistoryLoading ? (
+                  <span className="text-xs font-bold text-blue-700">{t.purchaseHistoryLoading}</span>
+                ) : null}
               </div>
-              {savedForms.length ? (
+              {purchaseHistoryError ? (
+                <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  {purchaseHistoryError}
+                </div>
+              ) : null}
+              {purchaseHistory.length ? (
                 <div className="grid gap-2 md:grid-cols-2">
-                  {savedForms.slice(0, 4).map((saved) => (
-                    <div key={saved.id} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
-                      <div className="flex items-start justify-between gap-2">
+                  {purchaseHistory.slice(0, 8).map((item) => (
+                    <div key={item.ref} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
+                      <div className="flex flex-col gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-bold text-slate-800">{saved.title}</p>
-                          <p className="text-xs text-slate-500">{formatSavedDate(saved.updated_at)}</p>
+                          <span className="mb-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">
+                            {item.kind === "crypto" ? t.purchaseHistoryKindCrypto : t.purchaseHistoryKindWithdraw}
+                          </span>
+                          <p className="truncate text-sm font-bold text-slate-800">{item.title}</p>
+                          {item.subtitle ? (
+                            <p className="text-xs text-slate-500">{item.subtitle}</p>
+                          ) : null}
+                          <p className="text-[11px] text-slate-400">{formatSavedDate(item.ts)}</p>
                         </div>
-                        <div className="flex shrink-0 gap-1">
+                        <div className="flex flex-wrap gap-1">
                           <button
                             type="button"
-                            onClick={() => handleLoadSavedForm(saved)}
-                            className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-blue-700"
+                            disabled={!item.downloadable || purchasePdfDownloading === item.ref}
+                            onClick={() => handleDownloadPurchasePdf(item)}
+                            className="inline-flex min-w-[7rem] flex-1 items-center justify-center gap-1 rounded-lg bg-emerald-600 px-2 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                           >
-                            {t.savedFormsLoad}
+                            {purchasePdfDownloading === item.ref ? (
+                              <Loader2 className="animate-spin" size={14} />
+                            ) : (
+                              <Download size={14} />
+                            )}
+                            {t.purchaseHistoryDownload}
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDeleteSavedForm(saved.id)}
-                            className="rounded-lg bg-slate-100 p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
-                            aria-label={t.savedFormsDelete}
-                            title={t.savedFormsDelete}
+                            onClick={() => handleLoadPurchaseIntoForm(item)}
+                            className="inline-flex min-w-[7rem] flex-1 items-center justify-center rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-50"
                           >
-                            <Trash2 size={14} />
+                            {t.purchaseHistoryLoadForm}
                           </button>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-              ) : savedFormsLoaded ? (
-                <p className="text-sm text-slate-500">{t.savedFormsEmpty}</p>
+              ) : purchaseHistoryLoaded ? (
+                <p className="text-sm text-slate-500">{t.purchaseHistoryEmpty}</p>
               ) : (
-                <p className="text-sm text-slate-500">{t.savedFormsSaving}</p>
+                <p className="text-sm text-slate-500">{t.purchaseHistoryLoading}</p>
               )}
             </div>
             {step1Error ? (
