@@ -50,6 +50,52 @@ def _normalized_db_url() -> str:
     return _encode_credentials_in_pg_uri(raw)
 
 
+def _conninfo_prefer_ipv4(url: str) -> str:
+    """If *host* has an IPv4 (A) record, set *hostaddr* so libpq connects over IPv4.
+
+    Railway and similar hosts often have no IPv6 egress; Supabase ``db.*.supabase.co`` can
+    resolve to IPv6 first, causing "Network is unreachable". Forcing *hostaddr* to the
+    IPv4 address works when an A record exists. If there is no A record, return *url* unchanged
+    (use Supabase pooler URI in that case).
+    """
+    if os.environ.get("DATABASE_PREFER_IPV4", "1").strip().lower() in ("0", "false", "no", "off"):
+        return url
+
+    import socket
+
+    import psycopg.conninfo as ci
+
+    try:
+        opts = dict(ci.conninfo_to_dict(url))
+    except Exception:
+        return url
+
+    host = (opts.get("host") or "").strip()
+    if not host or host.startswith("/"):
+        return url
+
+    port_str = opts.get("port")
+    try:
+        port = int(port_str) if port_str is not None else 5432
+    except (TypeError, ValueError):
+        port = 5432
+
+    try:
+        infos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return url
+
+    if not infos:
+        return url
+
+    ipv4 = infos[0][4][0]
+    opts["hostaddr"] = ipv4
+    try:
+        return ci.make_conninfo(**opts)
+    except Exception:
+        return url
+
+
 def _validate_pg_conninfo(url: str) -> None:
     """Reject obviously broken URIs after normalization."""
     import psycopg.conninfo
@@ -89,8 +135,9 @@ def connect_storage():
         from psycopg.rows import dict_row
 
         _validate_pg_conninfo(url)
+        conninfo = _conninfo_prefer_ipv4(url)
         try:
-            return psycopg.connect(url, row_factory=dict_row)
+            return psycopg.connect(conninfo, row_factory=dict_row)
         except psycopg.OperationalError as exc:
             err = str(exc)
             if "Name or service not known" in err and "@" in err:
@@ -101,12 +148,10 @@ def connect_storage():
                 ) from exc
             if "Network is unreachable" in err:
                 raise ValueError(
-                    "PostgreSQL is unreachable at the configured host (often IPv6). Supabase "
-                    '"Direct connection" (db.*.supabase.co:5432) can resolve to IPv6; Railway '
-                    "often has no IPv6 egress. In Supabase → Project Settings → Database → "
-                    "Connection string, choose Transaction pooler or Session pooler "
-                    "(host contains pooler.supabase.com; transaction pooler often uses port 6543), "
-                    "paste that URI into Railway DATABASE_URL, and redeploy."
+                    "PostgreSQL connection failed (network unreachable). The app already prefers IPv4 "
+                    "when an A record exists (DATABASE_PREFER_IPV4, default on). If this persists on "
+                    "Railway, paste Supabase's Transaction or Session pooler URI "
+                    "(host contains pooler.supabase.com; often port 6543) into DATABASE_URL."
                 ) from exc
             raise
     DATA_DIR.mkdir(parents=True, exist_ok=True)
