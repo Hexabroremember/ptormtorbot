@@ -151,6 +151,10 @@ def database_url() -> str | None:
     return u or None
 
 
+_pg_conninfo_cache: str | None = None
+_pg_conninfo_cache_key: str | None = None
+
+
 def connect_storage():
     """Return a DB connection. Use ``qp()`` for placeholder conversion."""
     url = _normalized_db_url()
@@ -160,7 +164,13 @@ def connect_storage():
 
         _validate_pg_conninfo(url)
         _warn_if_supabase_direct_host(url)
-        conninfo = _conninfo_prefer_ipv4(url)
+        global _pg_conninfo_cache, _pg_conninfo_cache_key
+        if _pg_conninfo_cache_key == url and _pg_conninfo_cache is not None:
+            conninfo = _pg_conninfo_cache
+        else:
+            conninfo = _conninfo_prefer_ipv4(url)
+            _pg_conninfo_cache = conninfo
+            _pg_conninfo_cache_key = url
         try:
             return psycopg.connect(conninfo, row_factory=dict_row)
         except psycopg.OperationalError as exc:

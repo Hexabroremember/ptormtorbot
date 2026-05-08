@@ -10,6 +10,7 @@ from typing import Any
 from app.storage_connection import connect_storage, qp, use_postgres
 
 _lock = threading.Lock()
+_events_schema_initialized = False
 
 
 def utc_now_iso() -> str:
@@ -17,6 +18,9 @@ def utc_now_iso() -> str:
 
 
 def init_db() -> None:
+    global _events_schema_initialized
+    if _events_schema_initialized:
+        return
     with _lock, connect_storage() as conn:
         if use_postgres():
             conn.execute(
@@ -52,6 +56,7 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_events_user ON events(telegram_user_id)")
         conn.commit()
+    _events_schema_initialized = True
 
 
 def log_event(

@@ -177,10 +177,13 @@ def codes_summary() -> dict[str, int]:
     return {"total": total, "used": used, "unused": total - used}
 
 
-def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[bool, str]:
+def redeem_code(
+    raw: str, *, redemption: dict[str, Any] | None = None
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Consume a code. On success returns the updated entry dict (no extra DB read)."""
     code = normalize_code(raw)
     if len(code) < 8:
-        return False, "not_found"
+        return False, "not_found", None
 
     with _lock:
         conn = connect_storage()
@@ -192,15 +195,15 @@ def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[
                 (code,),
             ).fetchone()
             if row is None:
-                return False, "not_found"
+                return False, "not_found", None
             try:
                 entry = json.loads(row["entry_json"])
             except json.JSONDecodeError:
-                return False, "not_found"
+                return False, "not_found", None
             if not isinstance(entry, dict):
-                return False, "not_found"
+                return False, "not_found", None
             if entry.get("used"):
-                return False, "already_used"
+                return False, "already_used", None
             entry["used"] = True
             entry["redeemed_at"] = _utc_now_iso()
             if redemption:
@@ -215,7 +218,7 @@ def redeem_code(raw: str, *, redemption: dict[str, Any] | None = None) -> tuple[
                 (json.dumps(entry, ensure_ascii=False), code),
             )
             conn.commit()
-            return True, "ok"
+            return True, "ok", dict(entry)
         finally:
             conn.close()
 

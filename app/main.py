@@ -13,7 +13,7 @@ import fitz
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -739,6 +739,115 @@ def _send_final_pdf_to_telegram(
     return False
 
 
+def _redeem_payment_code_deliver(
+    *,
+    chat_id: int | None,
+    ident: dict[str, Any],
+    norm: str,
+    code_hint: str | None,
+    form_dict: dict[str, Any] | None,
+    redemption: dict[str, Any] | None,
+    request_meta: dict[str, Any],
+    tg_user_resolved: bool,
+    already_pdf_sent: bool,
+) -> None:
+    """Notify Telegram + log redemption after the HTTP response returns (avoids blocking the client)."""
+    uid = ident.get("telegram_user_id")
+    un = ident.get("username")
+    fn = ident.get("first_name")
+    telegram_pdf_sent = already_pdf_sent
+    if chat_id and not already_pdf_sent:
+        try:
+            pdf_bytes: bytes | None = None
+            if form_dict:
+                pdf_bytes = _pdf_from_form_snapshot(form_dict)
+            if pdf_bytes is None and redemption:
+                pdf_bytes = _pdf_from_form_snapshot(redemption)
+            if pdf_bytes is None:
+                log_event(
+                    "telegram_pdf_skipped_no_form_data",
+                    source="mini_app",
+                    telegram_user_id=uid,
+                    username=un,
+                    first_name=fn,
+                    meta={
+                        "code_last4": code_hint,
+                        "form_received": bool(form_dict),
+                        "form_fields": form_dict or {},
+                    },
+                )
+            if _send_final_pdf_to_telegram(
+                chat_id=chat_id,
+                pdf_bytes=pdf_bytes,
+                event_source="mini_app",
+                telegram_user_id=uid,
+                username=un,
+                first_name=fn,
+                meta={"code_last4": code_hint, "reason": "payment_code_redeemed"},
+            ):
+                mark_code_telegram_pdf_sent(norm)
+                telegram_pdf_sent = True
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                "telegram_delivery_failed",
+                source="mini_app",
+                telegram_user_id=uid,
+                username=un,
+                first_name=fn,
+                meta={
+                    "code_last4": code_hint,
+                    "error": str(exc),
+                    "exception_type": type(exc).__name__,
+                },
+            )
+    if chat_id:
+        ok_msg, err_msg = send_telegram_message(
+            chat_id,
+            "✅ <b>תשלום אושר במערכת</b>\n\n"
+            + (
+                "📎 קובץ PDF סופי נשלח גם כאן בצ׳אט."
+                if telegram_pdf_sent
+                else "ניתן להוריד את הקובץ הסופי מהמיני־אפליקציה."
+            ),
+        )
+        if not ok_msg:
+            log_event(
+                "telegram_delivery_failed",
+                source="mini_app",
+                telegram_user_id=uid,
+                username=un,
+                first_name=fn,
+                meta={
+                    "code_last4": code_hint,
+                    "kind": "redeem_confirmation",
+                    "error": err_msg,
+                },
+            )
+    else:
+        log_event(
+            "telegram_notify_skipped_no_user",
+            source="mini_app",
+            meta={
+                "code_last4": code_hint,
+                "reason": "missing_or_invalid_init_data",
+            },
+        )
+    log_event(
+        "payment_code_redeemed",
+        source="mini_app",
+        telegram_user_id=uid,
+        username=un,
+        first_name=fn,
+        meta={
+            **request_meta,
+            "code_last4": code_hint,
+            "redemption": redemption,
+            "telegram_pdf_sent": telegram_pdf_sent,
+            "telegram_user_resolved": tg_user_resolved,
+        },
+    )
+
+
 @app.post("/api/crypto/create-invoice")
 async def crypto_create_invoice(
     payload: CreateCryptoInvoiceRequest,
@@ -943,6 +1052,7 @@ def admin_crypto_orders(
 def redeem_payment_code(
     payload: RedeemPaymentCodeRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     authorization: str | None = Header(default=None),
     tg_init_data: str | None = Query(default=None),
@@ -986,98 +1096,22 @@ def redeem_payment_code(
             raise HTTPException(status_code=400, detail="code_expiry_mismatch")
 
     redemption = _build_redemption_dict(tg_user, payload.form)
-    ok, key = redeem_code(payload.code, redemption=redemption or None)
+    ok, key, redeemed_entry = redeem_code(payload.code, redemption=redemption or None)
     if ok:
-        code_entry = get_code_entry(norm) or {}
-        telegram_pdf_sent = bool(code_entry.get("telegram_pdf_sent"))
-        if tg_user and not telegram_pdf_sent:
-            try:
-                pdf_bytes: bytes | None = None
-                form_dump: dict[str, Any] = {}
-                if payload.form:
-                    form_dump = payload.form.model_dump()
-                    pdf_bytes = _pdf_from_form_snapshot(payload.form)
-                if pdf_bytes is None and redemption:
-                    pdf_bytes = _pdf_from_form_snapshot(redemption)
-                if pdf_bytes is None:
-                    log_event(
-                        "telegram_pdf_skipped_no_form_data",
-                        source="mini_app",
-                        telegram_user_id=ident["telegram_user_id"],
-                        username=ident["username"],
-                        first_name=ident["first_name"],
-                        meta={
-                            "code_last4": code_hint,
-                            "form_received": bool(payload.form),
-                            "form_fields": form_dump,
-                        },
-                    )
-                # _send_final_pdf_to_telegram logs its own failure with the exact error.
-                if _send_final_pdf_to_telegram(
-                    chat_id=tg_user.id,
-                    pdf_bytes=pdf_bytes,
-                    event_source="mini_app",
-                    telegram_user_id=ident["telegram_user_id"],
-                    username=ident["username"],
-                    first_name=ident["first_name"],
-                    meta={"code_last4": code_hint, "reason": "payment_code_redeemed"},
-                ):
-                    mark_code_telegram_pdf_sent(norm)
-                    telegram_pdf_sent = True
-            except Exception as exc:  # noqa: BLE001
-                log_event(
-                    "telegram_delivery_failed",
-                    source="mini_app",
-                    telegram_user_id=ident["telegram_user_id"],
-                    username=ident["username"],
-                    first_name=ident["first_name"],
-                    meta={"code_last4": code_hint, "error": str(exc), "exception_type": type(exc).__name__},
-                )
-        if tg_user:
-            ok_msg, err_msg = send_telegram_message(
-                tg_user.id,
-                "✅ <b>תשלום אושר במערכת</b>\n\n"
-                + (
-                    "📎 קובץ PDF סופי נשלח גם כאן בצ׳אט."
-                    if telegram_pdf_sent
-                    else "ניתן להוריד את הקובץ הסופי מהמיני־אפליקציה."
-                ),
-            )
-            if not ok_msg:
-                log_event(
-                    "telegram_delivery_failed",
-                    source="mini_app",
-                    telegram_user_id=ident["telegram_user_id"],
-                    username=ident["username"],
-                    first_name=ident["first_name"],
-                    meta={
-                        "code_last4": code_hint,
-                        "kind": "redeem_confirmation",
-                        "error": err_msg,
-                    },
-                )
-        else:
-            log_event(
-                "telegram_notify_skipped_no_user",
-                source="mini_app",
-                meta={
-                    "code_last4": code_hint,
-                    "reason": "missing_or_invalid_init_data",
-                },
-            )
-        log_event(
-            "payment_code_redeemed",
-            source="mini_app",
-            telegram_user_id=ident["telegram_user_id"],
-            username=ident["username"],
-            first_name=ident["first_name"],
-            meta={
-                **_request_meta(request),
-                "code_last4": code_hint,
-                "redemption": redemption,
-                "telegram_pdf_sent": telegram_pdf_sent,
-                "telegram_user_resolved": bool(tg_user),
-            },
+        already_pdf_sent = bool((pending_entry or redeemed_entry or {}).get("telegram_pdf_sent"))
+        form_dict = payload.form.model_dump(exclude_none=True) if payload.form else None
+        request_meta = _request_meta(request)
+        background_tasks.add_task(
+            _redeem_payment_code_deliver,
+            chat_id=tg_user.id if tg_user else None,
+            ident=ident,
+            norm=norm,
+            code_hint=code_hint,
+            form_dict=form_dict,
+            redemption=redemption,
+            request_meta=request_meta,
+            tg_user_resolved=bool(tg_user),
+            already_pdf_sent=already_pdf_sent,
         )
         return {"ok": True}
     if key == "already_used":

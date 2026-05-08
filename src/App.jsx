@@ -120,8 +120,8 @@ function storedTelegramUserSession() {
   }
 }
 
-/** Telegram often fills initData shortly after load — wait before redeem so the server can resolve chat_id. */
-function waitForTelegramInitData(maxMs = 12000, intervalMs = 50) {
+/** Telegram often fills initData shortly after load — optional wait when headers would otherwise be empty. */
+function waitForTelegramInitData(maxMs = 6000, intervalMs = 40) {
   return new Promise((resolve) => {
     const start = Date.now();
     let done = false;
@@ -686,7 +686,9 @@ const App = () => {
       setCryptoError(null);
       try {
         window.Telegram?.WebApp?.ready?.();
-        await waitForTelegramInitData(12000);
+        if (!telegramInitData()) {
+          await waitForTelegramInitData(5000);
+        }
         const tg = window.Telegram?.WebApp;
         const tgUser = tg?.initDataUnsafe?.user;
         const initData = telegramInitData();
@@ -779,7 +781,9 @@ const App = () => {
     setPaymentCodeSubmitting(true);
     try {
       window.Telegram?.WebApp?.ready?.();
-      await waitForTelegramInitData(12000);
+      if (!telegramInitData()) {
+        await waitForTelegramInitData(5000);
+      }
       const initData = telegramInitData();
       const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
       const idDigits = formData.idNumber.replace(/\D/g, "");

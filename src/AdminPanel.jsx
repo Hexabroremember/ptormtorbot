@@ -326,15 +326,17 @@ export default function AdminPanel() {
 
       if (window.Telegram?.WebApp) {
         setTgWaiting(true);
-        await waitForTelegramInitData();
-        if (cancelled) return;
-        setTgWaiting(false);
-        setHasInitData(Boolean(telegramInitData()));
+        await Promise.all([
+          waitForTelegramInitData(8000).finally(() => {
+            setTgWaiting(false);
+            setHasInitData(Boolean(telegramInitData()));
+          }),
+          load(),
+        ]);
       } else {
         setHasInitData(false);
+        await load();
       }
-
-      await load();
     })();
 
     return () => {
