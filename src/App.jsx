@@ -662,9 +662,14 @@ const App = () => {
         return;
       }
       setStep1Error(null);
-      await saveCurrentForm({ silent: false });
+      /* Don’t block navigation on saved-forms PUT — step 2 reads live ``formData``; autosave also runs in background. */
+      setCurrentStep(2);
+      void saveCurrentForm({ silent: false });
+      return;
     }
-    if (currentStep < 3) setCurrentStep(currentStep + 1);
+    if (currentStep < 3) {
+      setCurrentStep((s) => s + 1);
+    }
   };
 
   const handleBack = () => {
