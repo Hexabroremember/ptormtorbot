@@ -99,6 +99,15 @@ def connect_storage():
                     "password in DATABASE_URL. Encode ``@`` as ``%40`` in the password, or use a "
                     "password without ``@``. See Supabase → Database → Connection string."
                 ) from exc
+            if "Network is unreachable" in err:
+                raise ValueError(
+                    "PostgreSQL is unreachable at the configured host (often IPv6). Supabase "
+                    '"Direct connection" (db.*.supabase.co:5432) can resolve to IPv6; Railway '
+                    "often has no IPv6 egress. In Supabase → Project Settings → Database → "
+                    "Connection string, choose Transaction pooler or Session pooler "
+                    "(host contains pooler.supabase.com; transaction pooler often uses port 6543), "
+                    "paste that URI into Railway DATABASE_URL, and redeploy."
+                ) from exc
             raise
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(SQLITE_PATH, timeout=10)
