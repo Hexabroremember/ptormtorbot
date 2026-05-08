@@ -306,23 +306,56 @@ def _event_row_to_dict(row: Any) -> dict[str, Any]:
 
 
 def list_payment_redeems_for_user(telegram_user_id: int, *, limit: int = 50) -> list[dict[str, Any]]:
-    """Rows for ``payment_code_redeemed`` events (purchase completed via withdraw code)."""
+    """Rows for ``payment_code_redeemed`` events (purchase completed via withdraw code).
+
+    Matches ``events.telegram_user_id`` or legacy rows where that column was NULL but
+    ``meta_json.redemption.telegram_user_id`` matches (older Mini App sessions).
+    """
     init_db()
     limit = max(1, min(limit, 100))
     with connect_storage() as conn:
-        rows = conn.execute(
-            qp(
+        if use_postgres():
+            rows = conn.execute(
                 """
                 SELECT id, ts, meta_json
                 FROM events
                 WHERE event_type = 'payment_code_redeemed'
-                  AND telegram_user_id = ?
+                  AND (
+                    telegram_user_id = %s
+                    OR (
+                      telegram_user_id IS NULL
+                      AND COALESCE(
+                        NULLIF(TRIM(meta_json::jsonb->'redemption'->>'telegram_user_id'), ''),
+                        ''
+                      ) <> ''
+                      AND (meta_json::jsonb->'redemption'->>'telegram_user_id')::bigint = %s
+                    )
+                  )
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (telegram_user_id, telegram_user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT id, ts, meta_json
+                FROM events
+                WHERE event_type = 'payment_code_redeemed'
+                  AND (
+                    telegram_user_id = ?
+                    OR (
+                      telegram_user_id IS NULL
+                      AND CAST(
+                        json_extract(meta_json, '$.redemption.telegram_user_id') AS INTEGER
+                      ) = ?
+                    )
+                  )
                 ORDER BY id DESC
                 LIMIT ?
-                """
-            ),
-            (telegram_user_id, limit),
-        ).fetchall()
+                """,
+                (telegram_user_id, telegram_user_id, limit),
+            ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
         try:
@@ -338,18 +371,46 @@ def get_payment_redeem_event_for_user(event_id: int, telegram_user_id: int) -> d
     """Single redeem event if it belongs to the user."""
     init_db()
     with connect_storage() as conn:
-        row = conn.execute(
-            qp(
+        if use_postgres():
+            row = conn.execute(
+                """
+                SELECT id, ts, meta_json
+                FROM events
+                WHERE id = %s
+                  AND event_type = 'payment_code_redeemed'
+                  AND (
+                    telegram_user_id = %s
+                    OR (
+                      telegram_user_id IS NULL
+                      AND COALESCE(
+                        NULLIF(TRIM(meta_json::jsonb->'redemption'->>'telegram_user_id'), ''),
+                        ''
+                      ) <> ''
+                      AND (meta_json::jsonb->'redemption'->>'telegram_user_id')::bigint = %s
+                    )
+                  )
+                """,
+                (event_id, telegram_user_id, telegram_user_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
                 """
                 SELECT id, ts, meta_json
                 FROM events
                 WHERE id = ?
-                  AND telegram_user_id = ?
                   AND event_type = 'payment_code_redeemed'
-                """
-            ),
-            (event_id, telegram_user_id),
-        ).fetchone()
+                  AND (
+                    telegram_user_id = ?
+                    OR (
+                      telegram_user_id IS NULL
+                      AND CAST(
+                        json_extract(meta_json, '$.redemption.telegram_user_id') AS INTEGER
+                      ) = ?
+                    )
+                  )
+                """,
+                (event_id, telegram_user_id, telegram_user_id),
+            ).fetchone()
     if row is None:
         return None
     try:
