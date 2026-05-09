@@ -82,6 +82,14 @@ OUTPUT_PDF_FILENAME = "FormPDFPreview.pdf"
 
 logger = logging.getLogger(__name__)
 
+_TELEGRAM_USER_REQUIRED_DETAIL: dict[str, Any] = {
+    "code": "telegram_user_required",
+    "hint": (
+        "Open the Mini App inside Telegram (keyboard or bot link with tg_user_sess). "
+        "A normal browser tab cannot send Telegram initData."
+    ),
+}
+
 
 class WatermarkMissingError(Exception):
     """Raised when ``watermark=True`` but no ``watermark.png`` exists on disk."""
@@ -327,11 +335,12 @@ def _require_mini_app_user(
     )
     if user is None:
         logger.info(
-            "[telegram:session] require_mini_app_user denied path=%s method=%s",
+            "[telegram:session] require_mini_app_user denied path=%s method=%s detail=%s",
             request.url.path,
             request.method,
+            _TELEGRAM_USER_REQUIRED_DETAIL["code"],
         )
-        raise HTTPException(status_code=401, detail="telegram_user_required")
+        raise HTTPException(status_code=401, detail=_TELEGRAM_USER_REQUIRED_DETAIL)
     return user
 
 
@@ -492,10 +501,11 @@ def mini_app_session(
     )
     if tg_user is None:
         logger.info(
-            "[telegram:session] mini_app_session rejected path=%s detail=telegram_user_required",
+            "[telegram:session] mini_app_session rejected path=%s detail=%s",
             request.url.path,
+            _TELEGRAM_USER_REQUIRED_DETAIL["code"],
         )
-        raise HTTPException(status_code=401, detail="telegram_user_required")
+        raise HTTPException(status_code=401, detail=_TELEGRAM_USER_REQUIRED_DETAIL)
     token = mint_user_tg_sess(tg_user.id)
     if not token:
         logger.error(
@@ -1120,9 +1130,10 @@ def _redeem_payment_code_deliver(
     request_meta: dict[str, Any],
     tg_user_resolved: bool,
     already_pdf_sent: bool,
+    telegram_user_session: str | None = None,
 ) -> None:
     """Send Telegram confirmation/PDF after redeem (purchase is logged synchronously on redeem)."""
-    owner_id = _owner_telegram_id_for_redeem(ident, redemption)
+    owner_id = _resolve_owner_for_redeem(ident, redemption, telegram_user_session)
     un = ident.get("username")
     fn = ident.get("first_name")
     telegram_pdf_sent = already_pdf_sent
@@ -1434,8 +1445,15 @@ async def crypto_ipn(request: Request) -> JSONResponse:
         )
         return JSONResponse({"ok": True, "updated": False, "reason": "already_paid"})
 
-    # Issue a one-time payment code for this order
-    code = issue_new_code(meta={"source": "crypto", "order_id": order_id})
+    # Issue a one-time payment code for this order (persist purchaser id for redeem notify fallback)
+    code_meta: dict[str, Any] = {"source": "crypto", "order_id": order_id}
+    tu = order.get("telegram_user_id")
+    if tu is not None:
+        try:
+            code_meta["purchaser_telegram_user_id"] = int(tu)
+        except (TypeError, ValueError):
+            pass
+    code = issue_new_code(meta=code_meta)
     updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
 
     logger.info(
@@ -1647,23 +1665,66 @@ def redeem_payment_code(
         already_pdf_sent = bool((redeemed_entry or {}).get("telegram_pdf_sent"))
         form_dict = payload.form.model_dump(exclude_none=True) if payload.form else None
         request_meta = _request_meta(request)
+        entry_snapshot = redeemed_entry or {}
+        notify_chat_id_enriched = notify_chat_id
+        owner_id_enriched = owner_id
+        redemption_enriched = redemption
+        ident_enriched = ident
+        # Client may redeem without initData/session; crypto codes still carry purchaser/order linkage.
+        if notify_chat_id_enriched is None:
+            ptid = entry_snapshot.get("purchaser_telegram_user_id")
+            if ptid is not None:
+                try:
+                    tid_int = int(ptid)
+                    notify_chat_id_enriched = tid_int
+                    owner_id_enriched = owner_id_enriched or tid_int
+                    redemption_enriched = {**(redemption_enriched or {}), "telegram_user_id": tid_int}
+                    ident_enriched = {**ident_enriched, "telegram_user_id": tid_int}
+                    logger.info(
+                        "[purchase:redeem] notify target from stored purchaser telegram_user_id=%s",
+                        tid_int,
+                    )
+                except (TypeError, ValueError):
+                    pass
+            if notify_chat_id_enriched is None:
+                oid = entry_snapshot.get("order_id")
+                if oid and str(entry_snapshot.get("source", "")).lower() == "crypto":
+                    ord_rec = get_order(str(oid))
+                    tu = ord_rec.get("telegram_user_id") if ord_rec else None
+                    if tu is not None:
+                        try:
+                            tid_int = int(tu)
+                            notify_chat_id_enriched = tid_int
+                            owner_id_enriched = owner_id_enriched or tid_int
+                            redemption_enriched = {
+                                **(redemption_enriched or {}),
+                                "telegram_user_id": tid_int,
+                            }
+                            ident_enriched = {**ident_enriched, "telegram_user_id": tid_int}
+                            logger.info(
+                                "[purchase:redeem] notify target from crypto order order_id=%s telegram_user_id=%s",
+                                oid,
+                                tid_int,
+                            )
+                        except (TypeError, ValueError):
+                            pass
         logger.info(
             "[purchase:redeem] code accepted code_last4=%s owner_id=%s already_telegram_pdf_sent=%s",
             code_hint,
-            owner_id,
+            owner_id_enriched,
             already_pdf_sent,
         )
         try:
             log_event(
                 "payment_code_redeemed",
                 source="mini_app",
-                telegram_user_id=owner_id,
-                username=ident.get("username"),
-                first_name=ident.get("first_name"),
+                telegram_user_id=owner_id_enriched,
+                username=ident_enriched.get("username"),
+                first_name=ident_enriched.get("first_name"),
                 meta={
                     **request_meta,
                     "code_last4": code_hint,
-                    "redemption": redemption or {},
+                    "redemption": redemption_enriched or {},
                     "telegram_pdf_sent": already_pdf_sent,
                     "telegram_user_resolved": bool(tg_user),
                 },
@@ -1673,15 +1734,16 @@ def redeem_payment_code(
                 "payment_code_redeemed log failed after redeem (code already consumed)"
             )
         _redeem_payment_code_deliver(
-            chat_id=notify_chat_id,
-            ident=ident,
+            chat_id=notify_chat_id_enriched,
+            ident=ident_enriched,
             norm=norm,
             code_hint=code_hint,
             form_dict=form_dict,
-            redemption=redemption,
+            redemption=redemption_enriched,
             request_meta=request_meta,
             tg_user_resolved=bool(tg_user),
             already_pdf_sent=already_pdf_sent,
+            telegram_user_session=payload.telegram_user_session,
         )
         return {"ok": True}
     if key == "already_used":

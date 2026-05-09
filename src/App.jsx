@@ -557,9 +557,21 @@ const App = () => {
       if (!res.ok) {
         setPurchaseHistory([]);
         setPurchaseHistoryLoaded(true);
-        setPurchaseHistoryError(
-          res.status === 401 ? content[language].purchaseHistoryAuthHint : ""
-        );
+        if (res.status === 401) {
+          let hintMsg = content[language].purchaseHistoryAuthHint;
+          try {
+            const errBody = await res.json();
+            const d = errBody.detail;
+            if (d && typeof d === "object" && typeof d.hint === "string" && d.hint.trim()) {
+              hintMsg = d.hint.trim();
+            }
+          } catch {
+            /* ignore */
+          }
+          setPurchaseHistoryError(hintMsg);
+        } else {
+          setPurchaseHistoryError("");
+        }
         return;
       }
       const data = await res.json();

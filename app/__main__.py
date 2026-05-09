@@ -22,7 +22,14 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 def _should_start_telegram_bot_subprocess() -> bool:
     """When false, only Uvicorn runs — use if another host/process already polls this bot token."""
     raw = os.environ.get("START_TELEGRAM_BOT_SUBPROCESS", "1").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+    if raw in ("0", "false", "no", "off"):
+        return False
+    # Alternative to START_TELEGRAM_BOT_SUBPROCESS=0: skip in-process getUpdates when updates are
+    # handled elsewhere (webhook on another service, second bot worker, etc.).
+    mode = os.environ.get("TELEGRAM_BOT_UPDATES_MODE", "polling").strip().lower()
+    if mode in ("webhook", "none", "external", "off"):
+        return False
+    return True
 
 
 def main() -> None:
@@ -74,10 +81,18 @@ def main() -> None:
             proc.pid,
         )
     elif token:
-        logger.warning(
-            "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "
-            "API-only mode — avoid duplicate getUpdates pollers for same TELEGRAM_BOT_TOKEN"
-        )
+        mode = os.environ.get("TELEGRAM_BOT_UPDATES_MODE", "polling").strip().lower()
+        if mode in ("webhook", "none", "external", "off"):
+            logger.warning(
+                "[telegram:bot] subprocess skipped TELEGRAM_BOT_UPDATES_MODE=%s "
+                "(no in-process polling — same token must not poll elsewhere unless intentional)",
+                mode,
+            )
+        else:
+            logger.warning(
+                "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "
+                "API-only mode — avoid duplicate getUpdates pollers for same TELEGRAM_BOT_TOKEN"
+            )
 
     uvicorn.run("app.main:app", host="0.0.0.0", port=port)
 
