@@ -1553,10 +1553,6 @@ def replace_fields(
         page.add_redact_annot(expand_rect(rect, 2), fill=(1, 1, 1))
     page.apply_redactions()
 
-    # Watermark must be drawn before editable text so all fields stay visible on top.
-    if watermark:
-        draw_watermark(page)
-
     draw_hebrew_name(
         page=page,
         text=hebrew_full_name,
@@ -1581,6 +1577,10 @@ def replace_fields(
             fontname="ArimoDataExp",
         )
     draw_static_qr(page=page, rect=qr_rect)
+
+    # Raster overlay last so template colors + filled fields stay underneath (semi-transparent PNG).
+    if watermark:
+        draw_watermark(page)
 
     # Second page: blank, same dimensions as the template page.
     pr = page.rect
@@ -1656,7 +1656,7 @@ def raster_png_bytes_clean(path: Path) -> bytes:
 
 
 def draw_watermark(page: fitz.Page) -> None:
-    """Place raster watermark on top of existing page content (last draw wins)."""
+    """Full-page PNG overlay; must run after text/QR so it appears on top of the filled card."""
     path = watermark_png_path()
     if path is None:
         raise FileNotFoundError("Watermark file missing")
