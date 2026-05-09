@@ -4,10 +4,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 NOWPAYMENTS_BASE = "https://api.nowpayments.io/v1"
 
@@ -93,6 +96,13 @@ async def create_invoice(
         "success_url": success_url,
         "cancel_url": cancel_url,
     }
+    logger.debug(
+        "[purchase:nowpayments] invoice request order_id=%s price=%s %s ipn_host=%s",
+        order_id,
+        price_amount,
+        price_currency,
+        ipn_callback_url.split("://", 1)[-1].split("/", 1)[0] if "://" in ipn_callback_url else "(relative)",
+    )
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
             f"{NOWPAYMENTS_BASE}/invoice",
@@ -100,7 +110,13 @@ async def create_invoice(
             headers={"x-api-key": key, "Content-Type": "application/json"},
         )
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+    logger.info(
+        "[purchase:nowpayments] invoice created order_id=%s has_invoice_url=%s",
+        order_id,
+        bool(data.get("invoice_url") or data.get("invoiceUrl")),
+    )
+    return data
 
 
 def verify_ipn_signature(raw_body: bytes, signature: str) -> bool:
@@ -111,8 +127,13 @@ def verify_ipn_signature(raw_body: bytes, signature: str) -> bool:
     """
     secret = _ipn_secret()
     if not secret:
+        logger.debug(
+            "[purchase:nowpayments_ipn] signature check skipped (NOWPAYMENTS_IPN_SECRET unset) body_len=%s",
+            len(raw_body or b""),
+        )
         return True
     if not signature:
+        logger.warning("[purchase:nowpayments_ipn] signature missing but secret is configured")
         return False
     try:
         data: dict[str, Any] = json.loads(raw_body)
@@ -124,6 +145,20 @@ def verify_ipn_signature(raw_body: bytes, signature: str) -> bool:
             sorted_payload.encode("utf-8"),
             hashlib.sha512,
         ).hexdigest()
-        return hmac.compare_digest(expected.lower(), signature.lower())
+        ok = hmac.compare_digest(expected.lower(), signature.lower())
+        if not ok:
+            logger.warning(
+                "[purchase:nowpayments_ipn] signature mismatch order_id=%s payment_status=%s",
+                data.get("order_id"),
+                data.get("payment_status"),
+            )
+        else:
+            logger.debug(
+                "[purchase:nowpayments_ipn] signature ok order_id=%s payment_status=%s",
+                data.get("order_id"),
+                data.get("payment_status"),
+            )
+        return ok
     except Exception:
+        logger.exception("[purchase:nowpayments_ipn] signature verify error (parse/HMAC)")
         return False

@@ -692,6 +692,10 @@ def _run_polling_with_token(token: str) -> None:
 
     async def post_init(application: Application) -> None:
         await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info(
+            "[telegram:bot] webhook cleared drop_pending_updates=True mode=polling "
+            "(START_TELEGRAM_BOT_SUBPROCESS / standalone bot process)"
+        )
         await application.bot.set_my_commands(
             [
                 BotCommand("start", "פותח את השירות (מיני־אפ או צ'אט)"),
@@ -710,8 +714,14 @@ def _run_polling_with_token(token: str) -> None:
                         web_app=WebAppInfo(url=menu_url),
                     ),
                 )
+                logger.info("[telegram:bot] menu button set web_app_url_configured=True")
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not set Web App menu button: %s", exc)
+                logger.warning("[telegram:bot] set_chat_menu_button failed: %s", exc)
+        else:
+            logger.warning(
+                "[telegram:bot] menu button skipped web_app_url_configured=False "
+                "(set WEB_APP_URL / public domain for Mini App entry)"
+            )
 
     application = Application.builder().token(token).post_init(post_init).build()
     application.add_handler(CallbackQueryHandler(callback_issue_payment_code, pattern=r"^ci:"))

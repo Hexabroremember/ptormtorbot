@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from typing import Any
 from urllib.parse import parse_qsl, unquote
 
 from fastapi import Header, HTTPException, Query, Request, status
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -73,16 +76,19 @@ def _init_data_max_age_sec() -> int:
 def verify_telegram_init_data(init_data: str) -> TelegramWebAppUser:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
+        logger.warning("[telegram:session] initData verify rejected detail=bot_token_missing")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="bot_token_missing")
     parsed = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=False))
     received_hash = parsed.pop("hash", "")
     if not received_hash:
+        logger.warning("[telegram:session] initData verify rejected detail=telegram_hash_missing")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_hash_missing")
 
     data_check_string = "\n".join(f"{key}={parsed[key]}" for key in sorted(parsed))
     secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
     calculated = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(calculated, received_hash):
+        logger.warning("[telegram:session] initData verify rejected detail=telegram_auth_invalid")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_auth_invalid")
 
     auth_date_raw = parsed.get("auth_date", "0")
@@ -91,21 +97,30 @@ def verify_telegram_init_data(init_data: str) -> TelegramWebAppUser:
     except ValueError:
         auth_date = 0
     if auth_date and time.time() - auth_date > _init_data_max_age_sec():
+        logger.warning(
+            "[telegram:session] initData verify rejected detail=telegram_auth_expired auth_age_sec=%s max_age_sec=%s",
+            int(time.time() - auth_date) if auth_date else 0,
+            _init_data_max_age_sec(),
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_auth_expired")
 
     user_raw = parsed.get("user")
     if not user_raw:
+        logger.warning("[telegram:session] initData verify rejected detail=telegram_user_missing")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_user_missing")
     try:
         user: dict[str, Any] = json.loads(user_raw)
         user_id = int(user["id"])
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("[telegram:session] initData verify rejected detail=telegram_user_invalid")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_user_invalid") from exc
-    return TelegramWebAppUser(
+    out = TelegramWebAppUser(
         id=user_id,
         first_name=user.get("first_name"),
         username=user.get("username"),
     )
+    logger.debug("[telegram:session] initData verified telegram_user_id=%s", out.id)
+    return out
 
 
 def parse_optional_telegram_user(init_data: str | None) -> TelegramWebAppUser | None:
@@ -159,6 +174,12 @@ def resolve_telegram_webapp_user(
         seen.add(raw)
         user = parse_optional_telegram_user(raw)
         if user:
+            logger.debug(
+                "[telegram:session] resolved via initData path=%s method=%s telegram_user_id=%s",
+                request.url.path,
+                request.method,
+                user.id,
+            )
             return user
 
     sess = (
@@ -166,9 +187,31 @@ def resolve_telegram_webapp_user(
         or request.query_params.get("tg_user_sess", "").strip()
         or request.headers.get("x-telegram-user-sess", "").strip()
     )
+    if sess:
+        logger.debug(
+            "[telegram:session] trying tg_user_sess fallback path=%s init_candidates_tried=%s",
+            request.url.path,
+            len(seen),
+        )
     user = verify_user_tg_sess(sess)
     if user:
+        logger.debug(
+            "[telegram:session] resolved via tg_user_sess path=%s telegram_user_id=%s",
+            request.url.path,
+            user.id,
+        )
         return user
+    if sess:
+        logger.debug(
+            "[telegram:session] unresolved after tg_user_sess path=%s (invalid, expired, or unsigned)",
+            request.url.path,
+        )
+    else:
+        logger.debug(
+            "[telegram:session] unresolved path=%s init_candidates_tried=%s no_tg_user_sess",
+            request.url.path,
+            len(seen),
+        )
     return None
 
 
@@ -248,6 +291,10 @@ def mint_admin_tg_sess(telegram_user_id: int) -> str:
 def mint_user_tg_sess(telegram_user_id: int) -> str:
     """Return URL-safe token proving this user opened the Mini App from our bot."""
     if not _user_tg_sess_key():
+        logger.warning(
+            "[telegram:session] mint_user_tg_sess unavailable (TELEGRAM_BOT_TOKEN missing) telegram_user_id=%s",
+            telegram_user_id,
+        )
         return ""
     exp = int(time.time()) + max(60, TG_USER_SESS_TTL_SEC)
     body = f"{telegram_user_id}:{exp}"
@@ -282,6 +329,8 @@ def verify_admin_tg_sess(token: str) -> TelegramWebAppUser | None:
 def verify_user_tg_sess(token: str) -> TelegramWebAppUser | None:
     """Validate a public Mini App user session token minted by the bot."""
     if not token or not _user_tg_sess_key():
+        if token and not _user_tg_sess_key():
+            logger.debug("[telegram:session] tg_user_sess verify skipped (no signing key / bot token)")
         return None
     try:
         pad = "=" * ((4 - len(token) % 4) % 4)
@@ -291,12 +340,20 @@ def verify_user_tg_sess(token: str) -> TelegramWebAppUser | None:
         uid = int(uid_s)
         exp = int(exp_s)
     except (ValueError, UnicodeDecodeError):
+        logger.debug("[telegram:session] tg_user_sess malformed (decode failed)")
         return None
     if time.time() > exp:
+        logger.debug(
+            "[telegram:session] tg_user_sess expired telegram_user_id=%s exp_epoch=%s",
+            uid,
+            exp,
+        )
         return None
     expected = hmac.new(_user_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, digest):
+        logger.debug("[telegram:session] tg_user_sess signature mismatch")
         return None
+    logger.debug("[telegram:session] tg_user_sess valid telegram_user_id=%s", uid)
     return TelegramWebAppUser(id=uid)
 
 
@@ -333,17 +390,39 @@ def require_admin(
     if init_data:
         user = verify_telegram_init_data(init_data)
         if user.id in admin_ids():
+            logger.debug(
+                "[telegram:admin] ok via initData telegram_user_id=%s path=%s",
+                user.id,
+                request.url.path,
+            )
             return AdminIdentity(auth_method="telegram", telegram_user=user)
+        logger.warning(
+            "[telegram:admin] forbidden not_admin telegram_user_id=%s path=%s",
+            user.id,
+            request.url.path,
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_only")
 
     sess_raw = (tg_sess or "").strip()
     if sess_raw:
         sess_user = verify_admin_tg_sess(unquote(sess_raw))
         if sess_user:
+            logger.debug(
+                "[telegram:admin] ok via tg_sess telegram_user_id=%s path=%s",
+                sess_user.id,
+                request.url.path,
+            )
             return AdminIdentity(auth_method="telegram_sess", telegram_user=sess_user)
 
     secret = effective_admin_secret()
     if secret and authorization == f"Bearer {secret}":
+        logger.debug("[telegram:admin] ok via api_key path=%s", request.url.path)
         return AdminIdentity(auth_method="api_key")
 
+    logger.info(
+        "[telegram:admin] auth failed admin_auth_required path=%s method=%s had_tg_sess_param=%s",
+        request.url.path,
+        request.method,
+        bool(sess_raw),
+    )
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="admin_auth_required")

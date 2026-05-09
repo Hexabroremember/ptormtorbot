@@ -291,7 +291,7 @@ def _telegram_user_from_webapp_request(
     authorization: str | None = None,
 ):
     auth = authorization or request.headers.get("Authorization") or request.headers.get("authorization")
-    return resolve_telegram_webapp_user(
+    user = resolve_telegram_webapp_user(
         request,
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data_query,
@@ -299,6 +299,13 @@ def _telegram_user_from_webapp_request(
         tg_user_sess=tg_user_sess,
         authorization=auth,
     )
+    logger.debug(
+        "[telegram:session] webapp_user_lookup path=%s method=%s telegram_user_id=%s",
+        request.url.path,
+        request.method,
+        user.id if user else None,
+    )
+    return user
 
 
 def _require_mini_app_user(
@@ -319,6 +326,11 @@ def _require_mini_app_user(
         authorization=authorization,
     )
     if user is None:
+        logger.info(
+            "[telegram:session] require_mini_app_user denied path=%s method=%s",
+            request.url.path,
+            request.method,
+        )
         raise HTTPException(status_code=401, detail="telegram_user_required")
     return user
 
@@ -479,10 +491,19 @@ def mini_app_session(
         authorization=authorization,
     )
     if tg_user is None:
+        logger.info(
+            "[telegram:session] mini_app_session rejected path=%s detail=telegram_user_required",
+            request.url.path,
+        )
         raise HTTPException(status_code=401, detail="telegram_user_required")
     token = mint_user_tg_sess(tg_user.id)
     if not token:
+        logger.error(
+            "[telegram:session] mini_app_session mint failed telegram_user_id=%s detail=session_mint_unavailable",
+            tg_user.id,
+        )
         raise HTTPException(status_code=503, detail="session_mint_unavailable")
+    logger.info("[telegram:session] mini_app_session minted telegram_user_id=%s", tg_user.id)
     return {"tg_user_sess": token}
 
 
@@ -883,6 +904,14 @@ def _send_final_pdf_to_telegram(
     first_name: str | None,
     meta: dict[str, Any],
 ) -> bool:
+    logger.debug(
+        "[telegram:delivery] final_pdf pipeline start source=%s chat_id=%s telegram_user_id=%s pdf_bytes=%s meta_keys=%s",
+        event_source,
+        chat_id,
+        telegram_user_id,
+        len(pdf_bytes) if pdf_bytes else None,
+        sorted(meta.keys()),
+    )
     if not chat_id:
         log_event(
             "telegram_delivery_failed",
@@ -891,6 +920,12 @@ def _send_final_pdf_to_telegram(
             username=username,
             first_name=first_name,
             meta={**meta, "error": "no_chat_id"},
+        )
+        logger.warning(
+            "[telegram:delivery] final_pdf skipped reason=no_chat_id source=%s telegram_user_id=%s meta=%s",
+            event_source,
+            telegram_user_id,
+            meta,
         )
         return False
     if not pdf_bytes:
@@ -901,6 +936,12 @@ def _send_final_pdf_to_telegram(
             username=username,
             first_name=first_name,
             meta={**meta, "error": "pdf_bytes_is_none"},
+        )
+        logger.warning(
+            "[telegram:delivery] final_pdf skipped reason=pdf_bytes_is_none source=%s chat_id=%s meta=%s",
+            event_source,
+            chat_id,
+            meta,
         )
         return False
 
@@ -946,10 +987,18 @@ def _send_final_pdf_to_telegram(
             first_name=first_name,
             meta={**meta, "delivery": "multipart"},
         )
+        logger.info(
+            "[telegram:delivery] final_pdf sent source=%s chat_id=%s telegram_user_id=%s mode=multipart",
+            event_source,
+            chat_id,
+            telegram_user_id,
+        )
         return True
 
     logger.warning(
-        "Telegram sendDocument multipart failed (will try URL): user=%s err=%s",
+        "[telegram:delivery] final_pdf multipart failed source=%s chat_id=%s telegram_user_id=%s err=%s",
+        event_source,
+        chat_id,
         telegram_user_id,
         err,
     )
@@ -970,8 +1019,10 @@ def _send_final_pdf_to_telegram(
             ok, err = send_telegram_document_url(chat_id, pdf_url, caption=caption)
             if not ok:
                 logger.warning(
-                    "Telegram sendDocument URL failed: url=%s err=%s",
-                    pdf_url,
+                    "[telegram:delivery] final_pdf url fallback failed chat_id=%s telegram_user_id=%s dl_token_prefix=%s err=%s",
+                    chat_id,
+                    telegram_user_id,
+                    dl_token[:12],
                     err,
                 )
             else:
@@ -983,14 +1034,26 @@ def _send_final_pdf_to_telegram(
                     first_name=first_name,
                     meta={**meta, "delivery": "url"},
                 )
+                logger.info(
+                    "[telegram:delivery] final_pdf sent source=%s chat_id=%s telegram_user_id=%s mode=url",
+                    event_source,
+                    chat_id,
+                    telegram_user_id,
+                )
                 return True
         except Exception as exc:
             err = f"url_method_exception: {exc}"
-            logger.exception("Telegram URL delivery failed")
+            logger.exception(
+                "[telegram:delivery] final_pdf url_method_exception chat_id=%s telegram_user_id=%s",
+                chat_id,
+                telegram_user_id,
+            )
     else:
         err = "public_base_url_not_configured"
         logger.warning(
-            "No public base URL for Telegram URL fallback (set WEB_APP_URL or Railway public URL)"
+            "[telegram:delivery] final_pdf url fallback unavailable: WEB_APP_URL/public base not set source=%s chat_id=%s",
+            event_source,
+            chat_id,
         )
 
     err = f"multipart={url_err} | url_or_fallback={err}"
@@ -1003,7 +1066,12 @@ def _send_final_pdf_to_telegram(
         first_name=first_name,
         meta={**meta, "error": err},
     )
-    logger.warning("telegram_pdf_delivery_failed user=%s err=%s", telegram_user_id, err)
+    logger.warning(
+        "[telegram:delivery] final_pdf failed source=%s telegram_user_id=%s err=%s",
+        event_source,
+        telegram_user_id,
+        err,
+    )
     return False
 
 
@@ -1059,6 +1127,16 @@ def _redeem_payment_code_deliver(
     fn = ident.get("first_name")
     telegram_pdf_sent = already_pdf_sent
     effective_chat_id = chat_id or owner_id
+    logger.debug(
+        "[purchase:redeem] deliver start code_last4=%s owner_id=%s notify_chat_id=%s effective_chat_id=%s "
+        "tg_user_resolved=%s already_pdf_sent=%s",
+        code_hint,
+        owner_id,
+        chat_id,
+        effective_chat_id,
+        tg_user_resolved,
+        already_pdf_sent,
+    )
 
     try:
         if not effective_chat_id:
@@ -1070,6 +1148,11 @@ def _redeem_payment_code_deliver(
                     "code_last4": code_hint,
                     "reason": "missing_chat_and_owner",
                 },
+            )
+            logger.info(
+                "[purchase:redeem] telegram notify skipped reason=missing_chat_and_owner code_last4=%s owner_id=%s",
+                code_hint,
+                owner_id,
             )
             return
 
@@ -1115,6 +1198,12 @@ def _redeem_payment_code_deliver(
                 if show_pdf_line
                 else "ניתן להוריד את הקובץ הסופי מהמיני־אפליקציה."
             )
+        )
+        logger.debug(
+            "[purchase:redeem] sending confirmation DM chat_id=%s code_last4=%s show_pdf_line=%s",
+            effective_chat_id,
+            code_hint,
+            show_pdf_line,
         )
         ok_msg, err_msg = send_telegram_message(effective_chat_id, approval_text)
         if not ok_msg:
@@ -1172,9 +1261,16 @@ async def crypto_create_invoice(
     """Create a NOWPayments invoice and return the hosted payment URL."""
     base_url = effective_public_base_url()
     if not base_url:
+        logger.warning("[purchase:crypto] create_invoice blocked detail=WEB_APP_URL_not_configured")
         raise HTTPException(status_code=503, detail="WEB_APP_URL not configured")
 
     order_id = str(uuid.uuid4())
+    logger.debug(
+        "[purchase:crypto] create_invoice start order_id=%s price_ils=%s expiry_option=%s",
+        order_id,
+        payload.price_ils,
+        payload.expiry_option,
+    )
     tg_user = _telegram_user_from_webapp_request(
         request,
         x_telegram_init_data=x_telegram_init_data,
@@ -1232,6 +1328,12 @@ async def crypto_create_invoice(
         invoice_url=invoice_url,
         form=form_snapshot or None,
     )
+    logger.info(
+        "[purchase:crypto] order persisted order_id=%s telegram_user_id=%s price_ils=%s",
+        order_id,
+        real_user_id,
+        payload.price_ils,
+    )
     log_event(
         "crypto_invoice_created",
         source="mini_app",
@@ -1268,36 +1370,81 @@ def crypto_order_status(order_id: str = Query(..., min_length=4)) -> dict:
 @app.post("/api/crypto/ipn")
 async def crypto_ipn(request: Request) -> JSONResponse:
     """NOWPayments IPN webhook — validates signature, issues payment code, notifies user."""
+    req_id = request.headers.get("x-request-id") or request.headers.get("X-Request-ID")
     raw_body = await request.body()
     sig = request.headers.get("x-nowpayments-sig", "")
 
+    logger.debug(
+        "[purchase:crypto_ipn] received request_id=%s body_len=%s has_sig=%s",
+        req_id,
+        len(raw_body or b""),
+        bool(sig),
+    )
+
     if not verify_ipn_signature(raw_body, sig):
+        logger.warning(
+            "[purchase:crypto_ipn] rejected invalid_ipn_signature request_id=%s",
+            req_id,
+        )
         raise HTTPException(status_code=400, detail="invalid_ipn_signature")
 
     try:
         data: dict[str, Any] = await request.json()
     except Exception:
+        logger.warning("[purchase:crypto_ipn] rejected invalid_json request_id=%s", req_id, exc_info=True)
         raise HTTPException(status_code=400, detail="invalid_json")
 
     payment_status = (data.get("payment_status") or "").lower()
     order_id = data.get("order_id", "")
 
+    logger.debug(
+        "[purchase:crypto_ipn] parsed order_id=%s payment_status=%s request_id=%s",
+        order_id or "(empty)",
+        payment_status or "(empty)",
+        req_id,
+    )
+
     # Only act on fully settled payments (not partially_paid — avoids granting before full receipt).
     if payment_status not in {"finished", "confirmed"}:
+        logger.info(
+            "[purchase:crypto_ipn] ignored non-terminal payment_status=%s order_id=%s request_id=%s",
+            payment_status,
+            order_id or "(empty)",
+            req_id,
+        )
         return JSONResponse({"ok": True, "ignored": True, "payment_status": payment_status})
 
     if not order_id:
+        logger.info("[purchase:crypto_ipn] ignored no_order_id request_id=%s", req_id)
         return JSONResponse({"ok": True, "ignored": True, "reason": "no_order_id"})
 
     order = get_order(order_id)
     if order is None:
+        logger.warning(
+            "[purchase:crypto_ipn] ignored order_not_found order_id=%s request_id=%s",
+            order_id,
+            req_id,
+        )
         return JSONResponse({"ok": True, "ignored": True, "reason": "order_not_found"})
     if order.get("status") == "paid":
+        logger.info(
+            "[purchase:crypto_ipn] duplicate ipn order already_paid order_id=%s request_id=%s",
+            order_id,
+            req_id,
+        )
         return JSONResponse({"ok": True, "updated": False, "reason": "already_paid"})
 
     # Issue a one-time payment code for this order
     code = issue_new_code(meta={"source": "crypto", "order_id": order_id})
     updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
+
+    logger.info(
+        "[purchase:crypto_ipn] payment_confirmed order_id=%s updated=%s telegram_user_id=%s request_id=%s",
+        order_id,
+        updated,
+        order.get("telegram_user_id"),
+        req_id,
+    )
 
     log_event(
         "crypto_payment_confirmed",
@@ -1316,6 +1463,11 @@ async def crypto_ipn(request: Request) -> JSONResponse:
     # Notify the user via Telegram if we know their chat id
     tg_user_id = order.get("telegram_user_id")
     if tg_user_id and updated:
+        logger.debug(
+            "[purchase:crypto_ipn] starting telegram notify order_id=%s telegram_user_id=%s",
+            order_id,
+            tg_user_id,
+        )
         pdf_sent = False
         pdf_bytes = None
         try:
@@ -1328,6 +1480,11 @@ async def crypto_ipn(request: Request) -> JSONResponse:
                 username=order.get("username"),
                 first_name=order.get("first_name"),
                 meta={"order_id": order_id, "error": str(exc)},
+            )
+            logger.exception(
+                "[purchase:crypto_ipn] pdf_from_form_snapshot failed order_id=%s telegram_user_id=%s",
+                order_id,
+                tg_user_id,
             )
         notice = (
             "✅ <b>התשלום התקבל ואושר</b>\n\n"
@@ -1347,6 +1504,19 @@ async def crypto_ipn(request: Request) -> JSONResponse:
                 username=order.get("username"),
                 first_name=order.get("first_name"),
                 meta={"order_id": order_id, "kind": "crypto_payment_notice", "error": err_msg},
+            )
+            logger.warning(
+                "[purchase:crypto_ipn] sendMessage failed order_id=%s telegram_user_id=%s err=%s",
+                order_id,
+                tg_user_id,
+                err_msg,
+            )
+        else:
+            logger.info(
+                "[purchase:crypto_ipn] payment notice sent order_id=%s telegram_user_id=%s has_pdf=%s",
+                order_id,
+                tg_user_id,
+                bool(pdf_bytes),
             )
         if pdf_bytes:
             try:
@@ -1371,6 +1541,24 @@ async def crypto_ipn(request: Request) -> JSONResponse:
                     first_name=order.get("first_name"),
                     meta={"order_id": order_id, "error": str(exc)},
                 )
+                logger.exception(
+                    "[purchase:crypto_ipn] final_pdf pipeline exception order_id=%s telegram_user_id=%s",
+                    order_id,
+                    tg_user_id,
+                )
+
+    elif not tg_user_id and updated:
+        logger.warning(
+            "[purchase:crypto_ipn] no telegram_user_id on order; skipping DM order_id=%s request_id=%s",
+            order_id,
+            req_id,
+        )
+    elif tg_user_id and not updated:
+        logger.debug(
+            "[purchase:crypto_ipn] skip telegram notify (mark_paid no-op) order_id=%s telegram_user_id=%s",
+            order_id,
+            tg_user_id,
+        )
 
     return JSONResponse({"ok": True, "updated": updated})
 
@@ -1420,6 +1608,13 @@ def redeem_payment_code(
     if owner_id is not None and not redemption.get("telegram_user_id"):
         redemption = {**redemption, "telegram_user_id": owner_id}
     notify_chat_id = (tg_user.id if tg_user else None) or owner_id
+    logger.debug(
+        "[purchase:redeem] redeem attempt code_last4=%s init_user_id=%s owner_id=%s notify_chat_id=%s",
+        code_hint,
+        tg_user.id if tg_user else None,
+        owner_id,
+        notify_chat_id,
+    )
     ok, key, redeemed_entry = redeem_code(
         payload.code,
         redemption=redemption or None,
@@ -1427,6 +1622,12 @@ def redeem_payment_code(
     )
     if key == "expiry_mismatch":
         tier_entry = redeemed_entry or {}
+        logger.info(
+            "[purchase:redeem] failed reason=expiry_mismatch code_last4=%s code_requires=%s form_expiry=%s",
+            code_hint,
+            tier_entry.get("expiry_option"),
+            form_expiry_opt,
+        )
         log_event(
             "payment_code_redeem_failed",
             source="mini_app",
@@ -1446,6 +1647,12 @@ def redeem_payment_code(
         already_pdf_sent = bool((redeemed_entry or {}).get("telegram_pdf_sent"))
         form_dict = payload.form.model_dump(exclude_none=True) if payload.form else None
         request_meta = _request_meta(request)
+        logger.info(
+            "[purchase:redeem] code accepted code_last4=%s owner_id=%s already_telegram_pdf_sent=%s",
+            code_hint,
+            owner_id,
+            already_pdf_sent,
+        )
         try:
             log_event(
                 "payment_code_redeemed",
@@ -1478,6 +1685,11 @@ def redeem_payment_code(
         )
         return {"ok": True}
     if key == "already_used":
+        logger.info(
+            "[purchase:redeem] failed reason=already_used code_last4=%s telegram_user_id=%s",
+            code_hint,
+            ident.get("telegram_user_id"),
+        )
         log_event(
             "payment_code_redeem_failed",
             source="mini_app",
@@ -1494,6 +1706,11 @@ def redeem_payment_code(
         username=ident["username"],
         first_name=ident["first_name"],
         meta={**_request_meta(request), "reason": "invalid", "code_last4": code_hint},
+    )
+    logger.info(
+        "[purchase:redeem] failed reason=invalid_code code_last4=%s telegram_user_id=%s",
+        code_hint,
+        ident.get("telegram_user_id"),
     )
     raise HTTPException(status_code=400, detail="invalid_code")
 

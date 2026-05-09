@@ -68,11 +68,15 @@ def main() -> None:
             daemon=True,
         )
         proc.start()
-        logger.info("Telegram bot subprocess started (pid=%s).", proc.pid)
+        logger.info(
+            "[telegram:bot] subprocess started pid=%s mode=polling (getUpdates); "
+            "set START_TELEGRAM_BOT_SUBPROCESS=0 if another host polls this token",
+            proc.pid,
+        )
     elif token:
         logger.warning(
-            "Telegram bot subprocess skipped — START_TELEGRAM_BOT_SUBPROCESS is disabled. "
-            "Only start one getUpdates poller per TELEGRAM_BOT_TOKEN (see Railway logs if you see Conflict)."
+            "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "
+            "API-only mode — avoid duplicate getUpdates pollers for same TELEGRAM_BOT_TOKEN"
         )
 
     uvicorn.run("app.main:app", host="0.0.0.0", port=port)
