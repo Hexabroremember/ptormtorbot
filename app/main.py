@@ -32,6 +32,7 @@ from app.activity_store import (
 from app.admin_auth import (
     AdminIdentity,
     effective_admin_secret,
+    mint_user_tg_sess,
     require_admin,
     resolve_telegram_webapp_user,
     verify_user_tg_sess,
@@ -189,6 +190,11 @@ class SavedFormRequest(BaseModel):
 
 class PurchaseHistoryPdfRequest(BaseModel):
     ref: str = Field(..., min_length=6, max_length=160)
+
+
+class MiniAppSessionRequest(BaseModel):
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
 class RateLimitOverrideRequest(BaseModel):
@@ -453,6 +459,31 @@ def delete_my_form(
         meta={"saved_form_id": form_id, "deleted": out["ok"]},
     )
     return out
+
+
+@app.post("/api/mini-app/session")
+def mini_app_session(
+    payload: MiniAppSessionRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict[str, str]:
+    """Mint or refresh ``tg_user_sess`` after verifying WebApp initData (or existing valid sess)."""
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
+        authorization=authorization,
+    )
+    if tg_user is None:
+        raise HTTPException(status_code=401, detail="telegram_user_required")
+    token = mint_user_tg_sess(tg_user.id)
+    if not token:
+        raise HTTPException(status_code=503, detail="session_mint_unavailable")
+    return {"tg_user_sess": token}
 
 
 @app.get("/api/my-purchase-history")

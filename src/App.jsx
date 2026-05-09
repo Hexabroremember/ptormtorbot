@@ -171,13 +171,24 @@ export function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+function persistTelegramUserSession(sess) {
+  const v = (sess || "").trim();
+  if (!v) return;
+  try {
+    sessionStorage.setItem("telegramUserSession", v);
+    localStorage.setItem("telegramUserSession", v);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Persist bot-signed user session from the Mini App URL; survives payment browser hops. */
 function captureTelegramUserSessionFromUrl() {
   try {
     const params = new URLSearchParams(window.location.search);
     const sess = params.get("tg_user_sess");
     if (!sess) return;
-    sessionStorage.setItem("telegramUserSession", sess);
+    persistTelegramUserSession(sess);
     params.delete("tg_user_sess");
     const qs = params.toString();
     const clean = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
@@ -189,9 +200,41 @@ function captureTelegramUserSessionFromUrl() {
 
 function storedTelegramUserSession() {
   try {
-    return sessionStorage.getItem("telegramUserSession") || "";
+    return sessionStorage.getItem("telegramUserSession") || localStorage.getItem("telegramUserSession") || "";
   } catch {
     return "";
+  }
+}
+
+/** Max wait for initData before POST /api/mini-app/session (Telegram often fills it shortly after load). */
+const MINI_APP_SESSION_INIT_WAIT_MS = 10_000;
+
+async function bootstrapMiniAppSession() {
+  captureTelegramUserSessionFromUrl();
+  window.Telegram?.WebApp?.ready?.();
+  let initData = telegramInitData();
+  if (!initData) {
+    initData = await waitForTelegramInitData(MINI_APP_SESSION_INIT_WAIT_MS);
+  }
+  const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+  const path = "/api/mini-app/session";
+  const url = base ? `${base}${path}` : path;
+  const fetchUrl = appendTelegramContextQuery(url, initData || telegramInitData());
+  try {
+    const res = await fetch(fetchUrl, {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        telegram_init_data: telegramInitData() || initData || "",
+        telegram_user_session: storedTelegramUserSession(),
+      }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const tok = typeof data?.tg_user_sess === "string" ? data.tg_user_sess.trim() : "";
+    if (tok) persistTelegramUserSession(tok);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -364,7 +407,7 @@ const content = {
     purchaseHistoryKindCrypto: "קריפטו",
     purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
     purchaseHistoryAuthHint:
-      "לא ניתן לזהות את המשתמש (סשן טלגרם). סגרו את המיני־אפ לגמרי ופתחו שוב מהבוט, או פתחו את הקישור מהודעת הבוט — רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
+      "לא ניתן לזהות את המשתמש. פתחו את המיני־אפ מהבוט או מהקישור בהודעה, המתינו כמה שניות עד שטלגרם מסיים לטעון, ונסו שוב. רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
     purchaseHistoryRetry: "נסה שוב",
   },
   ar: {
@@ -432,7 +475,7 @@ const content = {
     purchaseHistoryKindCrypto: "كريبتو",
     purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
     purchaseHistoryAuthHint:
-      "تعذر التعرف على المستخدم (جلسة تيليجرام). أغلقوا التطبيق المصغّر بالكامل وافتحوه من البوت، أو من رابط في رسالة البوت — التحديث العادي لا يجدّد المصادقة دائمًا.",
+      "تعذر التعرف على المستخدم. افتحوا التطبيق المصغّر من البوت أو من الرابط في رسالة البوت، انتظروا بضع ثوانٍ حتى يكتمل تحميل تيليجرام، ثم أعيدوا المحاولة. التحديث العادي في المتصفح لا يجدّد المصادقة دائمًا.",
     purchaseHistoryRetry: "إعادة المحاولة",
   },
 };
@@ -537,6 +580,7 @@ const App = () => {
     if (!telegramInitData() && !storedTelegramUserSession()) {
       await waitForTelegramInitData(5000);
     }
+    await bootstrapMiniAppSession();
     await loadPurchaseHistory();
   };
 
@@ -545,10 +589,7 @@ const App = () => {
     window.Telegram?.WebApp?.ready?.();
     let cancelled = false;
     (async () => {
-      const hasAuth = () => Boolean(telegramInitData() || storedTelegramUserSession());
-      if (!hasAuth()) {
-        await waitForTelegramInitData(4500);
-      }
+      await bootstrapMiniAppSession();
       if (cancelled) return;
       await loadPurchaseHistory();
     })();
@@ -894,6 +935,7 @@ const App = () => {
     setPaymentCodeSubmitting(true);
     try {
       window.Telegram?.WebApp?.ready?.();
+      await bootstrapMiniAppSession();
       if (!telegramInitData() && !storedTelegramUserSession()) {
         await waitForTelegramInitData();
       }
