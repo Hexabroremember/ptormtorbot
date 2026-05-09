@@ -172,6 +172,7 @@ class AdminIssueCodesRequest(BaseModel):
 class CreateCryptoInvoiceRequest(BaseModel):
     price_ils: float = Field(..., gt=0, le=50_000)
     expiry_option: str | None = Field(default=None, max_length=32)
+    # Ignored for authorization: identity comes only from verified initData or tg_user_sess.
     telegram_user_id: int | None = None
     username: str | None = Field(default=None, max_length=64)
     first_name: str | None = Field(default=None, max_length=64)
@@ -1282,7 +1283,11 @@ async def crypto_create_invoice(
         payload.price_ils,
         payload.expiry_option,
     )
-    tg_user = _telegram_user_from_webapp_request(
+    # Require server-verified Telegram identity so crypto_orders.telegram_user_id and IPN-issued
+    # codes always carry purchaser_telegram_user_id for redeem-time DMs. Unauthenticated
+    # payload.telegram_user_id alone is not accepted (spoofable). DM cannot fire without a
+    # stored chat id; old orders/codes created with NULL id need manual support or repurchase.
+    tg_user = _require_mini_app_user(
         request,
         x_telegram_init_data=x_telegram_init_data,
         tg_init_data_query=tg_init_data,
@@ -1293,8 +1298,8 @@ async def crypto_create_invoice(
     check_rate_limit("create_invoice", request, tg_user)
     ident = _telegram_log_identity(tg_user)
 
-    # Prefer init-data user over payload (init-data is server-verified)
-    real_user_id = ident["telegram_user_id"] or payload.telegram_user_id
+    # Identity is always from verified initData or bot-signed tg_user_sess (never raw body id).
+    real_user_id = ident["telegram_user_id"]
     real_username = ident["username"] or payload.username
     real_first_name = ident["first_name"] or payload.first_name
     form_snapshot = _build_redemption_dict(tg_user, payload.form)
@@ -1453,6 +1458,12 @@ async def crypto_ipn(request: Request) -> JSONResponse:
             code_meta["purchaser_telegram_user_id"] = int(tu)
         except (TypeError, ValueError):
             pass
+    else:
+        logger.warning(
+            "[purchase:crypto_ipn] code issued without purchaser_telegram_user_id order_id=%s "
+            "(order row has no telegram_user_id; redeem DM cannot target a chat)",
+            order_id,
+        )
     code = issue_new_code(meta=code_meta)
     updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
 
@@ -1685,7 +1696,18 @@ def redeem_payment_code(
                         tid_int,
                     )
                 except (TypeError, ValueError):
-                    pass
+                    logger.info(
+                        "[purchase:redeem] purchaser_telegram_user_id present but invalid raw=%r code_last4=%s",
+                        ptid,
+                        code_hint,
+                    )
+            else:
+                logger.info(
+                    "[purchase:redeem] no purchaser_telegram_user_id on code entry source=%s order_id=%s code_last4=%s",
+                    entry_snapshot.get("source"),
+                    entry_snapshot.get("order_id"),
+                    code_hint,
+                )
             if notify_chat_id_enriched is None:
                 oid = entry_snapshot.get("order_id")
                 if oid and str(entry_snapshot.get("source", "")).lower() == "crypto":
@@ -1708,6 +1730,11 @@ def redeem_payment_code(
                             )
                         except (TypeError, ValueError):
                             pass
+                    elif ord_rec is not None:
+                        logger.info(
+                            "[purchase:redeem] crypto order %s has no telegram_user_id; cannot infer notify chat",
+                            oid,
+                        )
         logger.info(
             "[purchase:redeem] code accepted code_last4=%s owner_id=%s already_telegram_pdf_sent=%s",
             code_hint,
