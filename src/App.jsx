@@ -48,7 +48,7 @@ function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl) {
   return `${origin}${path}`;
 }
 
-/** Rasterize page 1 of a watermarked PDF to a JPEG object URL for preview (no embedded PDF viewer). */
+/** Rasterize page 1 of a watermarked PDF to a PNG object URL for preview (no embedded PDF viewer). */
 async function renderPdfBlobToPreviewImageUrl(pdfBlob) {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -71,16 +71,20 @@ async function renderPdfBlobToPreviewImageUrl(pdfBlob) {
     canvas.height = bh;
     const ctx = canvas.getContext("2d", { alpha: false });
     if (!ctx) throw new Error("Canvas unsupported");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, bw, bh);
-    ctx.scale(dpr, dpr);
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
+    await page.render({
+      canvasContext: ctx,
+      viewport,
+      transform,
+      background: "rgb(255, 255, 255)",
+    }).promise;
     await pdf.destroy?.().catch(() => {});
     const imageBlob = await new Promise((resolve, reject) => {
       canvas.toBlob(
         (b) => (b ? resolve(b) : reject(new Error("Preview image failed"))),
-        "image/jpeg",
-        0.9
+        "image/png",
+        1
       );
     });
     return URL.createObjectURL(imageBlob);
@@ -288,7 +292,7 @@ const content = {
     purchaseHistoryKindCrypto: "קריפטו",
     purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
     purchaseHistoryAuthHint:
-      "לא ניתן לטעון היסטוריית רכישות (סשן). פתחו שוב את המיני־אפ מהבוט או רעננו.",
+      "לא ניתן לזהות את המשתמש (סשן טלגרם). סגרו את המיני־אפ לגמרי ופתחו שוב מהבוט, או פתחו את הקישור מהודעת הבוט — רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -355,7 +359,7 @@ const content = {
     purchaseHistoryKindCrypto: "كريبتو",
     purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
     purchaseHistoryAuthHint:
-      "تعذر تحميل سجل المشتريات (انتهت الجلسة). افتحوا التطبيق المصغّر من البوت أو أعيدوا التحميل.",
+      "تعذر التعرف على المستخدم (جلسة تيليجرام). أغلقوا التطبيق المصغّر بالكامل وافتحوه من البوت، أو من رابط في رسالة البوت — التحديث العادي لا يجدّد المصادقة دائمًا.",
   },
 };
 
@@ -412,12 +416,8 @@ const App = () => {
   /** Full-screen step 2 animation until preview JPEG exists or the request fails. */
   const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
 
-  useEffect(() => {
-    captureTelegramUserSessionFromUrl();
-    window.Telegram?.WebApp?.ready?.();
-  }, []);
-
   const loadPurchaseHistory = async () => {
+    captureTelegramUserSessionFromUrl();
     setPurchaseHistoryLoading(true);
     setPurchaseHistoryError(null);
     try {
@@ -446,7 +446,20 @@ const App = () => {
   };
 
   useEffect(() => {
-    loadPurchaseHistory();
+    captureTelegramUserSessionFromUrl();
+    window.Telegram?.WebApp?.ready?.();
+    let cancelled = false;
+    (async () => {
+      const hasAuth = () => Boolean(telegramInitData() || storedTelegramUserSession());
+      if (!hasAuth()) {
+        await waitForTelegramInitData(4500);
+      }
+      if (cancelled) return;
+      await loadPurchaseHistory();
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

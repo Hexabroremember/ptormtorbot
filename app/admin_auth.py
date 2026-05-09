@@ -55,6 +55,21 @@ def admin_ids() -> set[int]:
     return ids
 
 
+def _init_data_max_age_sec() -> int:
+    """Upper bound on how old WebApp ``auth_date`` may be (seconds).
+
+    Default 30 days so purchase history and other APIs keep working after long gaps;
+    set ``TELEGRAM_INIT_DATA_MAX_AGE_SEC`` for a stricter window (minimum enforced: 300).
+    """
+    raw = os.environ.get("TELEGRAM_INIT_DATA_MAX_AGE_SEC", "").strip()
+    if raw:
+        try:
+            return max(300, int(raw))
+        except ValueError:
+            pass
+    return 30 * 24 * 60 * 60
+
+
 def verify_telegram_init_data(init_data: str) -> TelegramWebAppUser:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
@@ -75,7 +90,7 @@ def verify_telegram_init_data(init_data: str) -> TelegramWebAppUser:
         auth_date = int(auth_date_raw)
     except ValueError:
         auth_date = 0
-    if auth_date and time.time() - auth_date > 7 * 24 * 60 * 60:
+    if auth_date and time.time() - auth_date > _init_data_max_age_sec():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="telegram_auth_expired")
 
     user_raw = parsed.get("user")

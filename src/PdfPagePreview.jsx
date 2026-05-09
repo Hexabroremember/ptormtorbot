@@ -64,13 +64,13 @@ export function PdfPagePreview({ pdfBlobUrl, ariaLabel, labels }) {
         if (!ctx) throw new Error("Canvas rendering unsupported");
 
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, bw, bh);
-        ctx.scale(dpr, dpr);
+        const transform = dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null;
 
         await page.render({
           canvasContext: ctx,
           viewport,
+          transform,
+          background: "rgb(255, 255, 255)",
         }).promise;
 
         if (gen !== paintGen.current) return;
