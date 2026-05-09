@@ -13,7 +13,6 @@ from urllib.parse import quote
 import fitz
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from PIL import Image
 from telegram import (
     BotCommand,
     InlineKeyboardButton,
@@ -47,6 +46,7 @@ from app.activity_store import log_event
 from app.admin_auth import admin_ids, effective_admin_secret, mint_admin_tg_sess, mint_user_tg_sess
 from app.payment_code_meta import TIER_LABELS as CODE_TIER_LABELS
 from app.payment_code_meta import heading_for_issue_key, meta_for_issue_key
+from app.pdf_raster import pdf_bytes_to_telegram_jpeg
 from app.public_url import effective_public_base_url
 
 load_dotenv(ROOT_DIR / ".env", override=False)
@@ -661,48 +661,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode="HTML",
             reply_markup=kb,
         )
-
-
-def pdf_bytes_to_telegram_jpeg(
-    pdf_bytes: bytes,
-    *,
-    zoom: float = 2.25,
-    jpeg_quality: int = 78,
-    max_long_edge: int = 2000,
-) -> bytes | None:
-    """Rasterize first PDF page to a JPEG, scaled for Telegram."""
-    try:
-        data = bytes(pdf_bytes)
-        doc = fitz.open(stream=data, filetype="pdf")
-        mat = fitz.Matrix(zoom, zoom)
-        if len(doc) < 1:
-            doc.close()
-            return None
-        pix = doc[0].get_pixmap(matrix=mat, alpha=False)
-        doc.close()
-        image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-
-        lw, lh = image.size
-        longest = max(lw, lh)
-        if longest > max_long_edge:
-            r = max_long_edge / longest
-            image = image.resize(
-                (max(1, int(lw * r)), max(1, int(lh * r))),
-                Image.Resampling.LANCZOS,
-            )
-
-        buf = BytesIO()
-        image.save(
-            buf,
-            format="JPEG",
-            quality=jpeg_quality,
-            optimize=True,
-            progressive=True,
-        )
-        return buf.getvalue()
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed to rasterize PDF for Telegram preview image")
-        return None
 
 
 def _run_polling_with_token(token: str) -> None:

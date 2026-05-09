@@ -39,13 +39,62 @@ function apiOriginFromEnv() {
   return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 }
 
-/** Join ``X-Pdf-Download-Path`` with origin; falls back to blob URL when header missing (non-Telegram browsers). */
-function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl) {
+/** Join ``X-Pdf-Download-Path`` with origin; use fetch Response.url when env omits API origin (fixes wrong pdf-download host). */
+function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl, responseUrl) {
   const p = (pathFromHeader || "").trim();
   if (!p) return blobFallbackUrl;
-  const origin = apiOriginFromEnv() || (typeof window !== "undefined" ? window.location.origin : "");
+  let origin = apiOriginFromEnv();
+  if (!origin && responseUrl) {
+    try {
+      origin = new URL(responseUrl).origin;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!origin && typeof window !== "undefined") origin = window.location.origin;
   const path = p.startsWith("/") ? p : `/${p}`;
   return `${origin}${path}`;
+}
+
+/** Deliver PDF from a successful fetch Response (same handler for final download + purchase history). */
+async function savePdfFromOkResponse(res, filename) {
+  const dlHeader = res.headers.get("X-Pdf-Download-Path");
+  const httpsHref = resolvePdfDownloadHref(dlHeader, "", res.url);
+  const tg = window.Telegram?.WebApp;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+  const blob = await res.blob();
+
+  const saveBlobLocal = () => {
+    const blobUrl = URL.createObjectURL(blob);
+    if (isIOS) {
+      window.open(blobUrl, "_blank");
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
+    } else {
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2_000);
+    }
+  };
+
+  if (httpsHref) {
+    if (typeof tg?.openLink === "function") {
+      tg.openLink(httpsHref);
+      return;
+    }
+    if (typeof tg?.downloadFile === "function") {
+      tg.downloadFile(httpsHref, filename);
+      return;
+    }
+    window.open(httpsHref, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  saveBlobLocal();
 }
 
 /** Rasterize page 1 of a watermarked PDF to a PNG object URL for preview (no embedded PDF viewer). */
@@ -293,6 +342,7 @@ const content = {
     purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
     purchaseHistoryAuthHint:
       "לא ניתן לזהות את המשתמש (סשן טלגרם). סגרו את המיני־אפ לגמרי ופתחו שוב מהבוט, או פתחו את הקישור מהודעת הבוט — רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
+    purchaseHistoryRetry: "נסה שוב",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -360,6 +410,7 @@ const content = {
     purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
     purchaseHistoryAuthHint:
       "تعذر التعرف على المستخدم (جلسة تيليجرام). أغلقوا التطبيق المصغّر بالكامل وافتحوه من البوت، أو من رابط في رسالة البوت — التحديث العادي لا يجدّد المصادقة دائمًا.",
+    purchaseHistoryRetry: "إعادة المحاولة",
   },
 };
 
@@ -421,10 +472,22 @@ const App = () => {
     setPurchaseHistoryLoading(true);
     setPurchaseHistoryError(null);
     try {
-      const initData = telegramInitData();
-      const res = await fetch(appendTelegramContextQuery(buildPurchaseHistoryApiUrl(), initData), {
-        headers: jsonHeaders(),
-      });
+      const fetchOnce = async () => {
+        const initData = telegramInitData();
+        return fetch(appendTelegramContextQuery(buildPurchaseHistoryApiUrl(), initData), {
+          headers: jsonHeaders(),
+        });
+      };
+
+      let res = await fetchOnce();
+      // initData sometimes appears after the first paint — one delayed retry reduces false 401s.
+      if (res.status === 401) {
+        window.Telegram?.WebApp?.ready?.();
+        captureTelegramUserSessionFromUrl();
+        await waitForTelegramInitData(4000);
+        res = await fetchOnce();
+      }
+
       if (!res.ok) {
         setPurchaseHistory([]);
         setPurchaseHistoryLoaded(true);
@@ -443,6 +506,15 @@ const App = () => {
     } finally {
       setPurchaseHistoryLoading(false);
     }
+  };
+
+  const retryPurchaseHistory = async () => {
+    window.Telegram?.WebApp?.ready?.();
+    captureTelegramUserSessionFromUrl();
+    if (!telegramInitData() && !storedTelegramUserSession()) {
+      await waitForTelegramInitData(5000);
+    }
+    await loadPurchaseHistory();
   };
 
   useEffect(() => {
@@ -778,38 +850,7 @@ const App = () => {
         throw new Error(detail || `HTTP ${res.status}`);
       }
 
-      const dlHeader = res.headers.get("X-Pdf-Download-Path");
-      const httpsHref = resolvePdfDownloadHref(dlHeader, "");
-
-      const tg = window.Telegram?.WebApp;
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-      if (httpsHref) {
-        if (typeof tg?.downloadFile === "function") {
-          tg.downloadFile(httpsHref, "PatorMeTor.pdf");
-        } else if (typeof tg?.openLink === "function") {
-          tg.openLink(httpsHref);
-        } else {
-          window.open(httpsHref, "_blank", "noopener,noreferrer");
-        }
-        res.blob().then((b) => URL.revokeObjectURL(URL.createObjectURL(b))).catch(() => {});
-        return;
-      }
-
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      if (isIOS) {
-        window.open(blobUrl, "_blank");
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
-      } else {
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = "PatorMeTor.pdf";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 2_000);
-      }
+      await savePdfFromOkResponse(res, "PatorMeTor.pdf");
     } catch (e) {
       setPurchaseHistoryError(e.message || String(e));
     } finally {
@@ -884,63 +925,25 @@ const App = () => {
     setPaymentCodeError(null);
     try {
       const idDigits = formData.idNumber.replace(/\D/g, "");
-        const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
-          method: "POST",
-          headers: jsonHeaders(),
-          body: JSON.stringify({
-            hebrew_full_name: formData.fullName.trim(),
-            english_full_name: formData.fullNameEn.trim().toUpperCase(),
-            id_number: idDigits,
-            expiration_date: computeExpirationForPdf(formData.expiryOption),
-            watermark: false,
-            telegram_init_data: telegramInitData() || "",
-            telegram_user_session: storedTelegramUserSession(),
-          }),
-        });
+      const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({
+          hebrew_full_name: formData.fullName.trim(),
+          english_full_name: formData.fullNameEn.trim().toUpperCase(),
+          id_number: idDigits,
+          expiration_date: computeExpirationForPdf(formData.expiryOption),
+          watermark: false,
+          telegram_init_data: telegramInitData() || "",
+          telegram_user_session: storedTelegramUserSession(),
+        }),
+      });
       if (!res.ok) {
         const detail = await parseJsonDetail(res);
         throw new Error(detail || `HTTP ${res.status}`);
       }
 
-      const dlHeader = res.headers.get("X-Pdf-Download-Path");
-      // Build a full HTTPS URL from the server-provided token path — always prefer this.
-      const httpsHref = resolvePdfDownloadHref(dlHeader, "");
-
-      const tg = window.Telegram?.WebApp;
-      const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-
-      if (httpsHref) {
-        // Primary path: use Telegram's native download sheet (works iOS + Android in Telegram 10+).
-        if (typeof tg?.downloadFile === "function") {
-          tg.downloadFile(httpsHref, "PatorMeTor.pdf");
-        } else if (typeof tg?.openLink === "function") {
-          // Fallback for all older Telegram versions — opens in device browser,
-          // where iOS/Safari can Save to Files and Android can download normally.
-          tg.openLink(httpsHref);
-        } else {
-          window.open(httpsHref, "_blank", "noopener,noreferrer");
-        }
-        // Still read blob so we can discard it — don't hold the server's memory unnecessarily.
-        res.blob().then((b) => URL.revokeObjectURL(URL.createObjectURL(b))).catch(() => {});
-        return;
-      }
-
-      // Fallback: no server token — read blob and trigger download locally.
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      if (isIOS) {
-        // Telegram/Safari on iOS can't download blob: URLs via <a>; open so browser offers Save.
-        window.open(blobUrl, "_blank");
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
-      } else {
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = "PatorMeTor.pdf";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 2_000);
-      }
+      await savePdfFromOkResponse(res, "PatorMeTor.pdf");
     } catch (e) {
       setPaymentCodeError(e.message || String(e));
     } finally {
@@ -966,7 +969,15 @@ const App = () => {
               </div>
               {purchaseHistoryError ? (
                 <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-                  {purchaseHistoryError}
+                  <p className="mb-2">{purchaseHistoryError}</p>
+                  <button
+                    type="button"
+                    disabled={purchaseHistoryLoading}
+                    onClick={() => retryPurchaseHistory()}
+                    className="rounded-lg bg-red-100 px-3 py-1.5 font-bold text-red-900 hover:bg-red-200 disabled:opacity-50"
+                  >
+                    {t.purchaseHistoryRetry}
+                  </button>
                 </div>
               ) : null}
               {purchaseHistory.length ? (

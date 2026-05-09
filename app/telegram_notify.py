@@ -111,6 +111,35 @@ def send_telegram_document_url(
         return False, str(exc)
 
 
+def send_telegram_photo_bytes(
+    chat_id: int | str | None,
+    photo_bytes: bytes,
+    *,
+    filename: str = "preview.jpg",
+    caption: str | None = None,
+) -> tuple[bool, str | None]:
+    """Upload a JPEG/PNG as sendPhoto (multipart)."""
+    token = _bot_token()
+    if not token or not chat_id:
+        return False, "telegram_bot_token_or_chat_missing"
+    try:
+        with httpx.Client(timeout=90) as client:
+            files = {"photo": (filename, BytesIO(photo_bytes), "image/jpeg")}
+            data: dict[str, str | int] = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            resp = client.post(
+                f"https://api.telegram.org/bot{token}/sendPhoto",
+                data=data,
+                files=files,
+            )
+            if resp.is_success:
+                return True, None
+            return False, _telegram_api_err(resp)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
 def send_telegram_document(
     chat_id: int | str | None,
     pdf_bytes: bytes,
