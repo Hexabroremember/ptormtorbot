@@ -27,7 +27,7 @@ def _should_start_telegram_bot_subprocess() -> bool:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    # Do not let a local .env override platform-injected secrets (Railway, Render, etc.).
+    # Do not let a local .env override platform-injected secrets (Railway, etc.).
     load_dotenv(ROOT_DIR / ".env", override=False)
 
     pub = effective_public_base_url()
@@ -36,7 +36,7 @@ def main() -> None:
     else:
         logger.warning(
             "Public app URL not resolved — set WEB_APP_URL or rely on "
-            "RAILWAY_PUBLIC_DOMAIN / RENDER_EXTERNAL_URL so Telegram can fetch PDF links."
+            "RAILWAY_PUBLIC_DOMAIN, RENDER_EXTERNAL_URL, or FLY_APP_NAME so Telegram can fetch PDF links."
         )
 
     if use_postgres():

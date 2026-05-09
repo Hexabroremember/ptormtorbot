@@ -72,6 +72,9 @@ def mini_app_entry_url(telegram_user_id: int | None = None) -> str:
 
     When a user-specific keyboard button is sent, include a signed user session so
     payment callbacks can still DM the user if Telegram initData is unavailable.
+
+    When ``telegram_user_id`` is omitted (e.g. global chat menu button), no ``tg_user_sess``
+    is appended — Telegram does not provide a user id at menu registration time.
     """
     base = normalize_https_origin(effective_public_base_url())
     if not base:

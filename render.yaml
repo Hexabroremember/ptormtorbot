@@ -1,10 +1,11 @@
-# Render Blueprint – connect GitHub repo, then: Dashboard → New → Blueprint.
+# Legacy Render Blueprint (optional). This repo deploys on Railway — use Railway variables + Dockerfile.
 # https://render.com/docs/blueprint-spec
 #
 # Environment (set in UI when sync: false, or use values below):
 #   TELEGRAM_BOT_TOKEN — @BotFather token (for app.telegram_bot; optional if API-only)
 #   WEB_APP_URL        — public URL of this web service, no trailing slash
 #                        e.g. https://ptormtorbot-api.onrender.com  (for Mini App + /start)
+#                        If unset, the app also uses Render's RENDER_EXTERNAL_URL when set.
 #   CORS_ORIGINS       — optional; comma-separated extra origins (e.g. https://my.netlify.app)
 #                        If unset, app allows * (see app/main.py)
 #   ADMIN_TELEGRAM_IDS — comma-separated Telegram user IDs allowed to open the admin Mini App

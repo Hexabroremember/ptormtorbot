@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 import logging
 import os
+import time
 import re
 import secrets
 import uuid
@@ -40,6 +41,7 @@ from app.crypto_orders import (
     create_order,
     get_order,
     list_orders,
+    list_orders_for_admin,
     list_paid_orders_for_user,
     mark_paid,
     mark_pdf_sent,
@@ -54,7 +56,9 @@ from app.payment_codes_store import (
 from app.payment_code_meta import TIER_LABELS as EXPIRY_TIER_LABELS
 from app.pdf_download_cache import get_pdf_record, register_pdf_bytes
 from app.public_url import effective_public_base_url
+from app.request_logging import StructuredLoggingMiddleware
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
+from app.storage_connection import connect_storage
 from app.telegram_notify import (
     get_telegram_chat_profile,
     send_telegram_document,
@@ -217,7 +221,7 @@ def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dic
 
 
 def _index_html_response() -> HTMLResponse:
-    """Serve built React SPA when ``dist/index.html`` exists (Docker/Render); else dev ``index.html``."""
+    """Serve built React SPA when ``dist/index.html`` exists (Docker/Railway); else dev ``index.html``."""
     dist_index = DIST_DIR / "index.html"
     if dist_index.is_file():
         raw = dist_index.read_text(encoding="utf-8")
@@ -243,8 +247,30 @@ app.add_middleware(
     allow_origins=_cors_allow_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Pdf-Download-Path"],
+    expose_headers=["X-Pdf-Download-Path", "X-Request-ID"],
 )
+app.add_middleware(StructuredLoggingMiddleware)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    """Process liveness (no database check)."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def health_ready() -> dict[str, str]:
+    """Readiness: verifies database connectivity."""
+    try:
+        with connect_storage() as conn:
+            conn.execute("SELECT 1")
+    except Exception as exc:
+        logger.warning("health_ready database check failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "database": str(exc)},
+        ) from exc
+    return {"status": "ready", "database": "ok"}
 
 
 def _telegram_user_from_webapp_request(
@@ -908,7 +934,7 @@ def _send_final_pdf_to_telegram(
     else:
         err = "public_base_url_not_configured"
         logger.warning(
-            "No public base URL for Telegram URL fallback (set WEB_APP_URL or Railway/Render domain)"
+            "No public base URL for Telegram URL fallback (set WEB_APP_URL or Railway public URL)"
         )
 
     err = f"multipart={url_err} | url_or_fallback={err}"
@@ -1122,8 +1148,15 @@ async def crypto_create_invoice(
             cancel_url=f"{base_url}/static/index.html",
         )
     except httpx.HTTPStatusError as exc:
+        body_preview = (exc.response.text or "")[:4000]
+        logger.error(
+            "NOWPayments HTTP %s: %s",
+            exc.response.status_code,
+            body_preview or "(empty body)",
+        )
         raise HTTPException(
-            status_code=502, detail=f"NOWPayments error: {exc.response.text[:200]}"
+            status_code=502,
+            detail="NOWPayments request failed; see server logs for details.",
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1160,7 +1193,11 @@ async def crypto_create_invoice(
 
 @app.get("/api/crypto/order-status")
 def crypto_order_status(order_id: str = Query(..., min_length=4)) -> dict:
-    """Poll order payment status (used by Mini App after opening invoice URL)."""
+    """Poll order payment status (used by Mini App after opening invoice URL).
+
+    Unauthenticated by design: ``order_id`` must be an unguessable UUID from
+    ``/api/crypto/create-invoice``. Never use short or sequential identifiers here.
+    """
     order = get_order(order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="order_not_found")
@@ -1188,8 +1225,8 @@ async def crypto_ipn(request: Request) -> JSONResponse:
     payment_status = (data.get("payment_status") or "").lower()
     order_id = data.get("order_id", "")
 
-    # Only act on confirmed/finished payments
-    if payment_status not in {"finished", "confirmed", "partially_paid"}:
+    # Only act on fully settled payments (not partially_paid — avoids granting before full receipt).
+    if payment_status not in {"finished", "confirmed"}:
         return JSONResponse({"ok": True, "ignored": True, "payment_status": payment_status})
 
     if not order_id:
@@ -1286,7 +1323,10 @@ def admin_crypto_orders(
     _: AdminIdentity = Depends(require_admin),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    include_ipn: bool = Query(default=False),
 ) -> dict:
+    if include_ipn:
+        return list_orders_for_admin(limit=limit, offset=offset)
     return list_orders(limit=limit, offset=offset)
 
 

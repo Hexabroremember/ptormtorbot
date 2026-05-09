@@ -265,6 +265,50 @@ def list_paid_orders_for_user(telegram_user_id: int, *, limit: int = 50) -> list
     return out
 
 
+def list_orders_for_admin(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    """Like ``list_orders`` but replaces ``ipn_payload`` with summary + truncated JSON for admin UI."""
+    init_orders_table()
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    trunc_limit = 6000
+    with connect_storage() as conn:
+        total = conn.execute("SELECT COUNT(*) AS n FROM crypto_orders").fetchone()["n"]
+        rows = conn.execute(
+            qp("SELECT * FROM crypto_orders ORDER BY created_at DESC LIMIT ? OFFSET ?"),
+            (limit, offset),
+        ).fetchall()
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        raw_ipn = d.pop("ipn_payload", None)
+        summary: dict[str, Any] | None = None
+        trunc: str | None = None
+        if isinstance(raw_ipn, str) and raw_ipn.strip():
+            try:
+                p = json.loads(raw_ipn)
+                if isinstance(p, dict):
+                    summary = {
+                        k: p.get(k)
+                        for k in (
+                            "payment_status",
+                            "order_id",
+                            "payment_id",
+                            "pay_currency",
+                            "pay_amount",
+                            "actually_paid",
+                            "outcome_amount",
+                        )
+                        if k in p
+                    }
+            except json.JSONDecodeError:
+                summary = {"_parse_error": True}
+            trunc = raw_ipn[:trunc_limit] + ("…" if len(raw_ipn) > trunc_limit else "")
+        d["ipn_summary"] = summary
+        d["ipn_payload_truncated"] = trunc
+        items.append(d)
+    return {"total": total, "items": items}
+
+
 def list_orders(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:
     init_orders_table()
     with connect_storage() as conn:

@@ -22,15 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Minimal transparent PNG so builds succeed when the repo has no custom watermark.png.
+# Replace at runtime (volume mount) or add COPY watermark.png before this RUN to override in image layers.
+RUN python -c "import base64, pathlib; pathlib.Path('watermark.png').write_bytes(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='))"
+
 COPY app ./app
 COPY assets ./assets
 COPY fonts ./fonts
 COPY static ./static
-# Preview step uses watermark=true; image may live at repo root or under assets/
-COPY watermark.png ./watermark.png
 COPY --from=frontend /build/dist ./dist
 
 ENV PYTHONUNBUFFERED=1
 
-# PORT is set by Railway/Render/etc.; read in Python (avoids shell / $PORT literal issues).
+# PORT is set by Railway/etc.; read in Python (avoids shell / $PORT literal issues).
 CMD ["python", "-m", "app"]

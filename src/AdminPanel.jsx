@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -270,6 +270,8 @@ export default function AdminPanel() {
   const [usersTotal, setUsersTotal] = useState(0);
   const [detailEventId, setDetailEventId] = useState(null);
   const [limitOverrides, setLimitOverrides] = useState([]);
+  const [cryptoOrders, setCryptoOrders] = useState([]);
+  const [cryptoExpandRow, setCryptoExpandRow] = useState(null);
   const [overrideForm, setOverrideForm] = useState({
     telegram_user_id: "",
     expires_at: "",
@@ -295,12 +297,14 @@ export default function AdminPanel() {
     setLoading(true);
     setError("");
     try {
-      const [summaryData, eventsData, codesData, usersData, overridesData] = await Promise.all([
+      const [summaryData, eventsData, codesData, usersData, overridesData, cryptoOrdersData] =
+        await Promise.all([
         adminFetch("/api/admin/summary"),
         adminFetch("/api/admin/events?limit=120"),
         adminFetch("/api/admin/payment-codes"),
         adminFetch("/api/admin/users?limit=200"),
         adminFetch("/api/admin/rate-limit-overrides"),
+        adminFetch("/api/admin/crypto-orders?limit=40&offset=0&include_ipn=true"),
       ]);
       setSummary(summaryData);
       setEvents(eventsData.items || []);
@@ -308,6 +312,7 @@ export default function AdminPanel() {
       setUsers(usersData.items || []);
       setUsersTotal(usersData.total ?? 0);
       setLimitOverrides(overridesData.items || []);
+      setCryptoOrders(cryptoOrdersData.items || []);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -610,6 +615,85 @@ export default function AdminPanel() {
             value={maintenanceEnabled ? "פעיל" : "כבוי"}
             tone={maintenanceEnabled ? "amber" : "slate"}
           />
+        </section>
+
+        <section className="rounded-2xl border border-cyan-400/25 bg-white p-5 text-slate-900">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-black">
+              <Receipt size={20} className="text-cyan-700" />
+              הזמנות קריפטו (IPN)
+            </h2>
+            <p className="max-w-xl text-xs text-slate-500">
+              סיכום סטטוס מתוך ה־IPN (לא מציג מפתחות API). Raw מקוצר לניפוי תקלות.
+            </p>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead className="bg-slate-50 text-right text-xs font-bold text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">מזהה הזמנה</th>
+                  <th className="px-3 py-2">סטטוס</th>
+                  <th className="px-3 py-2">מחיר ₪</th>
+                  <th className="px-3 py-2">IPN payment_status</th>
+                  <th className="px-3 py-2">עודכן</th>
+                  <th className="px-3 py-2">פירוט</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cryptoOrders.map((o) => (
+                  <Fragment key={o.order_id}>
+                    <tr className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-mono text-xs ltr">{o.order_id}</td>
+                      <td className="px-3 py-2">{o.status}</td>
+                      <td className="px-3 py-2">{o.price_ils != null ? `₪${Number(o.price_ils)}` : "—"}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {o.ipn_summary?.payment_status != null && o.ipn_summary.payment_status !== ""
+                          ? String(o.ipn_summary.payment_status)
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(o.updated_at)}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          className="text-xs font-bold text-cyan-700 underline"
+                          onClick={() =>
+                            setCryptoExpandRow((prev) => (prev === o.order_id ? null : o.order_id))
+                          }
+                        >
+                          {cryptoExpandRow === o.order_id ? "הסתר" : "הצג"}
+                        </button>
+                      </td>
+                    </tr>
+                    {cryptoExpandRow === o.order_id ? (
+                      <tr className="border-t border-slate-50 bg-slate-50/80">
+                        <td colSpan={6} className="px-3 py-3">
+                          <div className="mb-2 text-xs font-bold text-slate-600">ipn_summary</div>
+                          <pre className="mb-3 max-h-28 overflow-auto rounded-lg bg-white p-2 text-xs text-slate-800 ltr">
+                            {JSON.stringify(o.ipn_summary || {}, null, 2)}
+                          </pre>
+                          {o.ipn_payload_truncated ? (
+                            <>
+                              <div className="mb-1 text-xs font-bold text-slate-600">
+                                ipn_payload (מקוצר)
+                              </div>
+                              <pre className="max-h-48 overflow-auto rounded-lg bg-slate-900 p-2 text-xs text-emerald-100 ltr">
+                                {o.ipn_payload_truncated}
+                              </pre>
+                            </>
+                          ) : (
+                            <p className="text-xs text-slate-500">אין עדיין IPN משמר להזמנה זו.</p>
+                          )}
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!cryptoOrders.length ? (
+            <p className="mt-3 text-sm text-slate-500">אין הזמנות קריפטו במסד.</p>
+          ) : null}
         </section>
 
         <section className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
