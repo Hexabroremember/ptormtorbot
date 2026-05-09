@@ -33,6 +33,7 @@ from app.admin_auth import (
     effective_admin_secret,
     require_admin,
     resolve_telegram_webapp_user,
+    verify_user_tg_sess,
 )
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
 from app.crypto_orders import (
@@ -45,7 +46,6 @@ from app.crypto_orders import (
 )
 from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
 from app.payment_codes_store import (
-    get_code_entry,
     issue_new_code,
     mark_code_telegram_pdf_sent,
     normalize_code,
@@ -214,18 +214,6 @@ def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dic
                 if s:
                     out[key] = s
     return out
-
-
-def _payment_code_matches_form_expiry(code_entry: dict[str, Any], form: RedeemFormSnapshot | None) -> bool:
-    """Tier-specific codes require the Mini App expiry package to match issuance."""
-    if code_entry.get("issue_scope") != "tier":
-        return True
-    required = code_entry.get("expiry_option")
-    if not required:
-        return True
-    if form is None or not form.expiry_option:
-        return False
-    return str(form.expiry_option).strip() == str(required).strip()
 
 
 def _index_html_response() -> HTMLResponse:
@@ -955,6 +943,22 @@ def _owner_telegram_id_for_redeem(ident: dict[str, Any], redemption: dict[str, A
     return None
 
 
+def _resolve_owner_for_redeem(
+    ident: dict[str, Any],
+    redemption: dict[str, Any],
+    telegram_user_session: str | None,
+) -> int | None:
+    """Same as ``_owner_telegram_id_for_redeem`` plus bot minted ``tg_user_sess`` when initData is empty."""
+    uid = _owner_telegram_id_for_redeem(ident, redemption)
+    if uid is not None:
+        return uid
+    sess = (telegram_user_session or "").strip()
+    if not sess:
+        return None
+    u = verify_user_tg_sess(sess)
+    return u.id if u else None
+
+
 def _redeem_payment_code_deliver(
     *,
     chat_id: int | None,
@@ -967,9 +971,8 @@ def _redeem_payment_code_deliver(
     tg_user_resolved: bool,
     already_pdf_sent: bool,
 ) -> None:
-    """Notify Telegram + log redemption after the HTTP response returns (avoids blocking the client)."""
+    """Send Telegram confirmation/PDF after redeem (purchase is logged synchronously on redeem)."""
     owner_id = _owner_telegram_id_for_redeem(ident, redemption)
-    uid = owner_id
     un = ident.get("username")
     fn = ident.get("first_name")
     telegram_pdf_sent = already_pdf_sent
@@ -1071,21 +1074,8 @@ def _redeem_payment_code_deliver(
                         "exception_type": type(exc).__name__,
                     },
                 )
-    finally:
-        log_event(
-            "payment_code_redeemed",
-            source="mini_app",
-            telegram_user_id=owner_id,
-            username=un,
-            first_name=fn,
-            meta={
-                **request_meta,
-                "code_last4": code_hint,
-                "redemption": redemption,
-                "telegram_pdf_sent": telegram_pdf_sent,
-                "telegram_user_resolved": tg_user_resolved,
-            },
-        )
+    except Exception:
+        logger.exception("redeem_payment_code_deliver failed")
 
 
 @app.post("/api/crypto/create-invoice")
@@ -1328,31 +1318,56 @@ def redeem_payment_code(
     norm = normalize_code(payload.code)
     code_hint = norm[-4:].upper() if len(norm) >= 4 else None
 
-    pending_entry = get_code_entry(norm) if len(norm) >= 8 else None
-    if pending_entry is not None and not pending_entry.get("used"):
-        if not _payment_code_matches_form_expiry(pending_entry, payload.form):
-            log_event(
-                "payment_code_redeem_failed",
-                source="mini_app",
-                telegram_user_id=ident["telegram_user_id"],
-                username=ident["username"],
-                first_name=ident["first_name"],
-                meta={
-                    **_request_meta(request),
-                    "reason": "expiry_mismatch",
-                    "code_last4": code_hint,
-                    "code_requires": pending_entry.get("expiry_option"),
-                    "form_expiry": payload.form.expiry_option if payload.form else None,
-                },
-            )
-            raise HTTPException(status_code=400, detail="code_expiry_mismatch")
-
+    form_expiry_opt = payload.form.expiry_option if payload.form else None
     redemption = _build_redemption_dict(tg_user, payload.form)
-    ok, key, redeemed_entry = redeem_code(payload.code, redemption=redemption or None)
+    owner_id = _resolve_owner_for_redeem(ident, redemption, payload.telegram_user_session)
+    if owner_id is not None and not redemption.get("telegram_user_id"):
+        redemption = {**redemption, "telegram_user_id": owner_id}
+    ok, key, redeemed_entry = redeem_code(
+        payload.code,
+        redemption=redemption or None,
+        form_expiry_option=form_expiry_opt,
+    )
+    if key == "expiry_mismatch":
+        tier_entry = redeemed_entry or {}
+        log_event(
+            "payment_code_redeem_failed",
+            source="mini_app",
+            telegram_user_id=ident["telegram_user_id"],
+            username=ident["username"],
+            first_name=ident["first_name"],
+            meta={
+                **_request_meta(request),
+                "reason": "expiry_mismatch",
+                "code_last4": code_hint,
+                "code_requires": tier_entry.get("expiry_option"),
+                "form_expiry": form_expiry_opt,
+            },
+        )
+        raise HTTPException(status_code=400, detail="code_expiry_mismatch")
     if ok:
-        already_pdf_sent = bool((pending_entry or redeemed_entry or {}).get("telegram_pdf_sent"))
+        already_pdf_sent = bool((redeemed_entry or {}).get("telegram_pdf_sent"))
         form_dict = payload.form.model_dump(exclude_none=True) if payload.form else None
         request_meta = _request_meta(request)
+        try:
+            log_event(
+                "payment_code_redeemed",
+                source="mini_app",
+                telegram_user_id=owner_id,
+                username=ident.get("username"),
+                first_name=ident.get("first_name"),
+                meta={
+                    **request_meta,
+                    "code_last4": code_hint,
+                    "redemption": redemption or {},
+                    "telegram_pdf_sent": already_pdf_sent,
+                    "telegram_user_resolved": bool(tg_user),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "payment_code_redeemed log failed after redeem (code already consumed)"
+            )
         background_tasks.add_task(
             _redeem_payment_code_deliver,
             chat_id=tg_user.id if tg_user else None,

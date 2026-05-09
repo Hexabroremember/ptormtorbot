@@ -177,10 +177,29 @@ def codes_summary() -> dict[str, int]:
     return {"total": total, "used": used, "unused": total - used}
 
 
+def _tier_expiry_matches(code_entry: dict[str, Any], form_expiry_option: str | None) -> bool:
+    """Tier-scoped codes require the Mini App expiry package to match issuance."""
+    if code_entry.get("issue_scope") != "tier":
+        return True
+    required = code_entry.get("expiry_option")
+    if not required:
+        return True
+    if not form_expiry_option or not str(form_expiry_option).strip():
+        return False
+    return str(form_expiry_option).strip() == str(required).strip()
+
+
 def redeem_code(
-    raw: str, *, redemption: dict[str, Any] | None = None
+    raw: str,
+    *,
+    redemption: dict[str, Any] | None = None,
+    form_expiry_option: str | None = None,
 ) -> tuple[bool, str, dict[str, Any] | None]:
-    """Consume a code. On success returns the updated entry dict (no extra DB read)."""
+    """Consume a code. On success returns the updated entry dict (single DB round-trip).
+
+    ``form_expiry_option`` should match the client's selected tier when ``issue_scope`` is ``tier``.
+    On expiry mismatch the code is **not** consumed; returns ``expiry_mismatch`` and the entry snapshot.
+    """
     code = normalize_code(raw)
     if len(code) < 8:
         return False, "not_found", None
@@ -202,6 +221,8 @@ def redeem_code(
                 return False, "not_found", None
             if not isinstance(entry, dict):
                 return False, "not_found", None
+            if not _tier_expiry_matches(entry, form_expiry_option):
+                return False, "expiry_mismatch", dict(entry)
             if entry.get("used"):
                 return False, "already_used", None
             entry["used"] = True

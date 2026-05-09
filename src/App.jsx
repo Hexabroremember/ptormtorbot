@@ -119,8 +119,11 @@ function storedTelegramUserSession() {
   }
 }
 
-/** Telegram often fills initData shortly after load — optional wait when headers would otherwise be empty. */
-function waitForTelegramInitData(maxMs = 6000, intervalMs = 40) {
+/** Max wait when initData is still empty; bot session (tg_user_sess) needs no wait. */
+const TELEGRAM_INIT_FALLBACK_MS = 900;
+
+/** Telegram often fills initData shortly after load — optional short wait when headers would otherwise be empty. */
+function waitForTelegramInitData(maxMs = TELEGRAM_INIT_FALLBACK_MS, intervalMs = 16) {
   return new Promise((resolve) => {
     const start = Date.now();
     let done = false;
@@ -284,6 +287,8 @@ const content = {
     purchaseHistoryKindWithdraw: "קוד אישור",
     purchaseHistoryKindCrypto: "קריפטו",
     purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
+    purchaseHistoryAuthHint:
+      "לא ניתן לטעון היסטוריית רכישות (סשן). פתחו שוב את המיני־אפ מהבוט או רעננו.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -349,6 +354,8 @@ const content = {
     purchaseHistoryKindWithdraw: "رمز تأكيد",
     purchaseHistoryKindCrypto: "كريبتو",
     purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
+    purchaseHistoryAuthHint:
+      "تعذر تحميل سجل المشتريات (انتهت الجلسة). افتحوا التطبيق المصغّر من البوت أو أعيدوا التحميل.",
   },
 };
 
@@ -421,7 +428,9 @@ const App = () => {
       if (!res.ok) {
         setPurchaseHistory([]);
         setPurchaseHistoryLoaded(true);
-        setPurchaseHistoryError("");
+        setPurchaseHistoryError(
+          res.status === 401 ? content[language].purchaseHistoryAuthHint : ""
+        );
         return;
       }
       const data = await res.json();
@@ -655,8 +664,8 @@ const App = () => {
       setCryptoError(null);
       try {
         window.Telegram?.WebApp?.ready?.();
-        if (!telegramInitData()) {
-          await waitForTelegramInitData(5000);
+        if (!telegramInitData() && !storedTelegramUserSession()) {
+          await waitForTelegramInitData();
         }
         const tg = window.Telegram?.WebApp;
         const tgUser = tg?.initDataUnsafe?.user;
@@ -810,8 +819,8 @@ const App = () => {
     setPaymentCodeSubmitting(true);
     try {
       window.Telegram?.WebApp?.ready?.();
-      if (!telegramInitData()) {
-        await waitForTelegramInitData(5000);
+      if (!telegramInitData() && !storedTelegramUserSession()) {
+        await waitForTelegramInitData();
       }
       const initData = telegramInitData();
       const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
