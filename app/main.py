@@ -14,7 +14,7 @@ import fitz
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1360,7 +1360,6 @@ def admin_crypto_orders(
 def redeem_payment_code(
     payload: RedeemPaymentCodeRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
     authorization: str | None = Header(default=None),
     tg_init_data: str | None = Query(default=None),
@@ -1435,8 +1434,7 @@ def redeem_payment_code(
             logger.exception(
                 "payment_code_redeemed log failed after redeem (code already consumed)"
             )
-        background_tasks.add_task(
-            _redeem_payment_code_deliver,
+        _redeem_payment_code_deliver(
             chat_id=notify_chat_id,
             ident=ident,
             norm=norm,

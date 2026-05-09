@@ -39,33 +39,47 @@ function apiOriginFromEnv() {
   return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 }
 
-/** Join ``X-Pdf-Download-Path`` with origin; use fetch Response.url when env omits API origin (fixes wrong pdf-download host). */
-function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl, responseUrl) {
-  const p = (pathFromHeader || "").trim();
-  if (!p) return blobFallbackUrl;
-  let origin = apiOriginFromEnv();
-  if (!origin && responseUrl) {
+/** Resolve API origin for ``/pdf-download/…`` links: env first, then fetch URL, then Response.url, then page. */
+function resolveApiOriginForPdf(fetchInputUrl, responseUrl) {
+  const env = apiOriginFromEnv();
+  if (env) return env.replace(/\/$/, "");
+  const base = typeof window !== "undefined" ? window.location.href : undefined;
+  for (const u of [fetchInputUrl, responseUrl]) {
+    if (!u) continue;
     try {
-      origin = new URL(responseUrl).origin;
+      return new URL(u, base).origin;
     } catch {
       /* ignore */
     }
   }
-  if (!origin && typeof window !== "undefined") origin = window.location.origin;
-  const path = p.startsWith("/") ? p : `/${p}`;
-  return `${origin}${path}`;
+  return typeof window !== "undefined" ? window.location.origin : "";
 }
 
-/** Deliver PDF from a successful fetch Response (same handler for final download + purchase history). */
-async function savePdfFromOkResponse(res, filename) {
-  const dlHeader = res.headers.get("X-Pdf-Download-Path");
-  const httpsHref = resolvePdfDownloadHref(dlHeader, "", res.url);
+/** Join ``X-Pdf-Download-Path`` with API origin (critical when SPA host ≠ API host). */
+function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl, fetchInputUrl, responseUrl) {
+  const p = (pathFromHeader || "").trim();
+  if (!p) return blobFallbackUrl;
+  const origin = resolveApiOriginForPdf(fetchInputUrl, responseUrl);
+  if (!origin) return blobFallbackUrl;
+  const pathPart = p.startsWith("/") ? p : `/${p}`;
+  return `${origin}${pathPart}`;
+}
+
+/**
+ * Deliver PDF after a successful POST. Prefer Telegram ``downloadFile`` (correct HTTPS URL),
+ * then ``openLink``. Outside Telegram, prefer blob from the response body (avoids LB/token misses).
+ */
+async function savePdfFromOkResponse(res, filename, fetchInputUrl) {
+  const blob = await res.blob();
   const tg = window.Telegram?.WebApp;
+  const inTelegram = Boolean(tg);
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
-  const blob = await res.blob();
+  const dlHeader = res.headers.get("X-Pdf-Download-Path");
+  const httpsHref = resolvePdfDownloadHref(dlHeader, "", fetchInputUrl, res.url);
 
   const saveBlobLocal = () => {
+    if (!blob?.size) return;
     const blobUrl = URL.createObjectURL(blob);
     if (isIOS) {
       window.open(blobUrl, "_blank");
@@ -81,20 +95,29 @@ async function savePdfFromOkResponse(res, filename) {
     }
   };
 
-  if (httpsHref) {
-    if (typeof tg?.openLink === "function") {
-      tg.openLink(httpsHref);
-      return;
-    }
-    if (typeof tg?.downloadFile === "function") {
+  if (inTelegram && httpsHref) {
+    if (typeof tg.downloadFile === "function") {
       tg.downloadFile(httpsHref, filename);
       return;
     }
-    window.open(httpsHref, "_blank", "noopener,noreferrer");
+    if (typeof tg.openLink === "function") {
+      tg.openLink(httpsHref);
+      return;
+    }
+  }
+
+  if (!inTelegram) {
+    saveBlobLocal();
+    if (!blob?.size && httpsHref) {
+      window.open(httpsHref, "_blank", "noopener,noreferrer");
+    }
     return;
   }
 
   saveBlobLocal();
+  if (!blob?.size && httpsHref) {
+    window.open(httpsHref, "_blank", "noopener,noreferrer");
+  }
 }
 
 /** Rasterize page 1 of a watermarked PDF to a PNG object URL for preview (no embedded PDF viewer). */
@@ -837,20 +860,18 @@ const App = () => {
     setPurchasePdfDownloading(item.ref);
     setPurchaseHistoryError(null);
     try {
-      const res = await fetch(
-        appendTelegramContextQuery(buildPurchaseHistoryPdfUrl(), telegramInitData()),
-        {
-          method: "POST",
-          headers: jsonHeaders(),
-          body: JSON.stringify({ ref: item.ref }),
-        },
-      );
+      const pdfUrl = appendTelegramContextQuery(buildPurchaseHistoryPdfUrl(), telegramInitData());
+      const res = await fetch(pdfUrl, {
+        method: "POST",
+        headers: jsonHeaders(),
+        body: JSON.stringify({ ref: item.ref }),
+      });
       if (!res.ok) {
         const detail = await parseJsonDetail(res);
         throw new Error(detail || `HTTP ${res.status}`);
       }
 
-      await savePdfFromOkResponse(res, "PatorMeTor.pdf");
+      await savePdfFromOkResponse(res, "PatorMeTor.pdf", pdfUrl);
     } catch (e) {
       setPurchaseHistoryError(e.message || String(e));
     } finally {
@@ -925,7 +946,8 @@ const App = () => {
     setPaymentCodeError(null);
     try {
       const idDigits = formData.idNumber.replace(/\D/g, "");
-      const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
+      const pdfUrl = appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData());
+      const res = await fetch(pdfUrl, {
         method: "POST",
         headers: jsonHeaders(),
         body: JSON.stringify({
@@ -943,7 +965,7 @@ const App = () => {
         throw new Error(detail || `HTTP ${res.status}`);
       }
 
-      await savePdfFromOkResponse(res, "PatorMeTor.pdf");
+      await savePdfFromOkResponse(res, "PatorMeTor.pdf", pdfUrl);
     } catch (e) {
       setPaymentCodeError(e.message || String(e));
     } finally {

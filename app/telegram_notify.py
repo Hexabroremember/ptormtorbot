@@ -10,6 +10,9 @@ import httpx
 _profile_cache: dict[int, tuple[float, dict[str, str | None]]] = {}
 _PROFILE_TTL_SECONDS = int(os.environ.get("TELEGRAM_PROFILE_CACHE_TTL_SECONDS", "21600"))
 
+# Retries help intermittent Telegram API / TLS blips (reported ~50% miss rate without).
+_TELEGRAM_HTTP_ATTEMPTS = max(1, min(6, int(os.environ.get("TELEGRAM_HTTP_ATTEMPTS", "3"))))
+
 
 def _telegram_api_err(resp: httpx.Response) -> str:
     try:
@@ -67,17 +70,22 @@ def send_telegram_message(chat_id: int | str | None, text: str) -> tuple[bool, s
     token = _bot_token()
     if not token or not chat_id:
         return False, "telegram_bot_token_or_chat_missing"
-    try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            )
-            if resp.is_success:
-                return True, None
-            return False, _telegram_api_err(resp)
-    except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
-        return False, str(exc)
+    last_err: str | None = None
+    for attempt in range(_TELEGRAM_HTTP_ATTEMPTS):
+        if attempt:
+            time.sleep(0.35 * (2 ** (attempt - 1)))
+        try:
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+                )
+                if resp.is_success:
+                    return True, None
+                last_err = _telegram_api_err(resp)
+        except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
+            last_err = str(exc)
+    return False, last_err
 
 
 def send_telegram_document_url(
@@ -92,23 +100,28 @@ def send_telegram_document_url(
         return False, "telegram_bot_token_or_chat_missing"
     if not document_url:
         return False, "document_url_missing"
-    try:
-        with httpx.Client(timeout=45) as client:
-            payload: dict[str, str | int] = {
-                "chat_id": chat_id,
-                "document": document_url,
-            }
-            if caption:
-                payload["caption"] = caption
-            resp = client.post(
-                f"https://api.telegram.org/bot{token}/sendDocument",
-                json=payload,
-            )
-            if resp.is_success:
-                return True, None
-            return False, _telegram_api_err(resp)
-    except Exception as exc:  # noqa: BLE001
-        return False, str(exc)
+    last_err: str | None = None
+    for attempt in range(_TELEGRAM_HTTP_ATTEMPTS):
+        if attempt:
+            time.sleep(0.35 * (2 ** (attempt - 1)))
+        try:
+            with httpx.Client(timeout=60) as client:
+                payload: dict[str, str | int] = {
+                    "chat_id": chat_id,
+                    "document": document_url,
+                }
+                if caption:
+                    payload["caption"] = caption
+                resp = client.post(
+                    f"https://api.telegram.org/bot{token}/sendDocument",
+                    json=payload,
+                )
+                if resp.is_success:
+                    return True, None
+                last_err = _telegram_api_err(resp)
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+    return False, last_err
 
 
 def send_telegram_photo_bytes(
@@ -122,22 +135,27 @@ def send_telegram_photo_bytes(
     token = _bot_token()
     if not token or not chat_id:
         return False, "telegram_bot_token_or_chat_missing"
-    try:
-        with httpx.Client(timeout=90) as client:
-            files = {"photo": (filename, BytesIO(photo_bytes), "image/jpeg")}
-            data: dict[str, str | int] = {"chat_id": chat_id}
-            if caption:
-                data["caption"] = caption
-            resp = client.post(
-                f"https://api.telegram.org/bot{token}/sendPhoto",
-                data=data,
-                files=files,
-            )
-            if resp.is_success:
-                return True, None
-            return False, _telegram_api_err(resp)
-    except Exception as exc:  # noqa: BLE001
-        return False, str(exc)
+    last_err: str | None = None
+    for attempt in range(_TELEGRAM_HTTP_ATTEMPTS):
+        if attempt:
+            time.sleep(0.35 * (2 ** (attempt - 1)))
+        try:
+            with httpx.Client(timeout=120) as client:
+                files = {"photo": (filename, BytesIO(photo_bytes), "image/jpeg")}
+                data: dict[str, str | int] = {"chat_id": chat_id}
+                if caption:
+                    data["caption"] = caption
+                resp = client.post(
+                    f"https://api.telegram.org/bot{token}/sendPhoto",
+                    data=data,
+                    files=files,
+                )
+                if resp.is_success:
+                    return True, None
+                last_err = _telegram_api_err(resp)
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+    return False, last_err
 
 
 def send_telegram_document(
@@ -151,23 +169,28 @@ def send_telegram_document(
     token = _bot_token()
     if not token or not chat_id:
         return False, "telegram_bot_token_or_chat_missing"
-    try:
-        with httpx.Client(timeout=90) as client:
-            files = {
-                "document": (filename, BytesIO(pdf_bytes), "application/pdf"),
-            }
-            data: dict[str, str | int] = {
-                "chat_id": chat_id,
-            }
-            if caption:
-                data["caption"] = caption
-            resp = client.post(
-                f"https://api.telegram.org/bot{token}/sendDocument",
-                data=data,
-                files=files,
-            )
-            if resp.is_success:
-                return True, None
-            return False, _telegram_api_err(resp)
-    except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
-        return False, str(exc)
+    last_err: str | None = None
+    for attempt in range(_TELEGRAM_HTTP_ATTEMPTS):
+        if attempt:
+            time.sleep(0.35 * (2 ** (attempt - 1)))
+        try:
+            with httpx.Client(timeout=120) as client:
+                files = {
+                    "document": (filename, BytesIO(pdf_bytes), "application/pdf"),
+                }
+                data: dict[str, str | int] = {
+                    "chat_id": chat_id,
+                }
+                if caption:
+                    data["caption"] = caption
+                resp = client.post(
+                    f"https://api.telegram.org/bot{token}/sendDocument",
+                    data=data,
+                    files=files,
+                )
+                if resp.is_success:
+                    return True, None
+                last_err = _telegram_api_err(resp)
+        except Exception as exc:  # noqa: BLE001 - notification failure must not break payment flow
+            last_err = str(exc)
+    return False, last_err
