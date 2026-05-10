@@ -168,6 +168,9 @@ MSG_WEB_APP_START = (
     "🔒 תהליך פרטי ונוח\n"
     "🕒 מוכן תוך דקות"
 )
+MSG_REPLY_KEYBOARD_HINT = (
+    "⌨️ <b>ניתן לפתוח את הטופס גם מהכפתורים בתחתית המסך.</b>"
+)
 MSG_ERR_VALID = "⚠️ הנתונים אינם תקינים. נא לבדוק את השדות ולנסות שוב."
 MSG_ERR_GEN = (
     "❌ לא ניתן ליצור את הקובץ כעת.\n"
@@ -368,6 +371,16 @@ def web_app_reply_keyboard_for_user(user_id: int | None) -> ReplyKeyboardMarkup 
     )
 
 
+def mini_app_issue_inline_markup(user_id: int | None) -> InlineKeyboardMarkup | None:
+    """כפתור מוטבע לפתיחת המיני־אפ — מתחת להודעה; ``None`` כשאין כתובת ציבורית."""
+    mini = mini_app_entry_url(user_id)
+    if not mini:
+        return None
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(BTN_ISSUE_FORM, web_app=WebAppInfo(url=mini))]]
+    )
+
+
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """מנהלים: קישור לפאנל הניהול וקוד גיבוי לדפדפן."""
     if update.message is None:
@@ -444,12 +457,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     if mini_app_entry_url():
         context.user_data.clear()
-        kb = web_app_reply_keyboard_for_user(user.id if user else None)
+        uid = user.id if user else None
+        kb = web_app_reply_keyboard_for_user(uid)
+        inline = mini_app_issue_inline_markup(uid)
         await update.message.reply_text(
             MSG_WEB_APP_START,
             parse_mode="HTML",
-            reply_markup=kb,
+            reply_markup=inline,
         )
+        if kb:
+            await update.message.reply_text(
+                MSG_REPLY_KEYBOARD_HINT,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
         return ConversationHandler.END
     return await begin_chat_flow(update, context)
 
@@ -465,8 +486,10 @@ async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         username=user.username if user else None,
         first_name=user.first_name if user else None,
     )
-    bottom_kb = web_app_reply_keyboard_for_user(user.id if user else None)
+    uid = user.id if user else None
+    bottom_kb = web_app_reply_keyboard_for_user(uid)
     chat_rm = bottom_kb or ReplyKeyboardRemove()
+    inline = mini_app_issue_inline_markup(uid)
     if update.callback_query is not None:
         q = update.callback_query
         await q.answer()
@@ -475,7 +498,23 @@ async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
         chat = update.effective_chat
-        if chat is not None:
+        if chat is None:
+            return ConversationHandler.END
+        if inline:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=MSG_START,
+                parse_mode="HTML",
+                reply_markup=inline,
+            )
+            if bottom_kb:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text=MSG_REPLY_KEYBOARD_HINT,
+                    parse_mode="HTML",
+                    reply_markup=bottom_kb,
+                )
+        else:
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=MSG_START,
@@ -484,11 +523,24 @@ async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
         return HEBREW
     if update.message is not None:
-        await update.message.reply_text(
-            MSG_START,
-            parse_mode="HTML",
-            reply_markup=chat_rm,
-        )
+        if inline:
+            await update.message.reply_text(
+                MSG_START,
+                parse_mode="HTML",
+                reply_markup=inline,
+            )
+            if bottom_kb:
+                await update.message.reply_text(
+                    MSG_REPLY_KEYBOARD_HINT,
+                    parse_mode="HTML",
+                    reply_markup=bottom_kb,
+                )
+        else:
+            await update.message.reply_text(
+                MSG_START,
+                parse_mode="HTML",
+                reply_markup=chat_rm,
+            )
         return HEBREW
     return ConversationHandler.END
 
