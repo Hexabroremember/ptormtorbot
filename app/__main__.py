@@ -83,13 +83,13 @@ def main() -> None:
     elif token:
         mode = os.environ.get("TELEGRAM_BOT_UPDATES_MODE", "polling").strip().lower()
         if mode in ("webhook", "none", "external", "off"):
-            logger.warning(
+            logger.info(
                 "[telegram:bot] subprocess skipped TELEGRAM_BOT_UPDATES_MODE=%s "
                 "(no in-process polling — same token must not poll elsewhere unless intentional)",
                 mode,
             )
         else:
-            logger.warning(
+            logger.info(
                 "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "
                 "API-only mode — avoid duplicate getUpdates pollers for same TELEGRAM_BOT_TOKEN"
             )
