@@ -185,7 +185,8 @@ def resolve_telegram_webapp_user(
     sess = (
         (tg_user_sess or "").strip()
         or request.query_params.get("tg_user_sess", "").strip()
-        or request.headers.get("x-telegram-user-sess", "").strip()
+        or (request.headers.get("x-telegram-user-sess") or "").strip()
+        or (request.headers.get("X-Telegram-User-Sess") or "").strip()
     )
     if sess:
         logger.debug(
@@ -212,6 +213,14 @@ def resolve_telegram_webapp_user(
             request.url.path,
             len(seen),
         )
+        if not seen:
+            ua = (request.headers.get("user-agent") or "")[:160]
+            logger.debug(
+                "[telegram:session] no initData or tg_user_sess in request path=%s method=%s user_agent=%r",
+                request.url.path,
+                request.method,
+                ua,
+            )
     return None
 
 

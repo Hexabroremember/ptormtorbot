@@ -60,13 +60,11 @@ from app.public_url import effective_public_base_url
 from app.request_logging import StructuredLoggingMiddleware
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
 from app.storage_connection import connect_storage
-from app.pdf_raster import pdf_bytes_to_telegram_jpeg
 from app.telegram_notify import (
     get_telegram_chat_profile,
     send_telegram_document,
     send_telegram_document_url,
     send_telegram_message,
-    send_telegram_photo_bytes,
 )
 from app.user_saved_forms import delete_for_user, list_for_user, upsert_for_user
 
@@ -955,29 +953,6 @@ def _send_final_pdf_to_telegram(
             meta,
         )
         return False
-
-    stem = Path(OUTPUT_PDF_FILENAME).stem
-    jpg_preview = pdf_bytes_to_telegram_jpeg(
-        pdf_bytes, zoom=3.5, jpeg_quality=92, max_long_edge=4096
-    )
-    jpg_compressed = pdf_bytes_to_telegram_jpeg(
-        pdf_bytes, zoom=2.25, jpeg_quality=78, max_long_edge=2000
-    )
-    for idx, jpg in enumerate((jpg_preview, jpg_compressed), start=1):
-        if jpg:
-            ok_photo, photo_err = send_telegram_photo_bytes(
-                chat_id,
-                jpg,
-                filename=f"{stem}-{idx}.jpg",
-                caption="תצוגת העמוד הראשון מהטופס הסופי." if idx == 1 else None,
-            )
-            if not ok_photo:
-                logger.warning(
-                    "telegram sendPhoto failed user=%s idx=%s err=%s",
-                    telegram_user_id,
-                    idx,
-                    photo_err,
-                )
 
     caption = "הקובץ הסופי נשמר כאן בצ׳אט כדי שלא יאבד."
 

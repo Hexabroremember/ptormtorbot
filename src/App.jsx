@@ -171,6 +171,27 @@ export function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
+/** True when the page runs inside Telegram's WebApp bridge (initData may still be empty for a few ticks). */
+function isTelegramWebAppShell() {
+  return Boolean(window.Telegram?.WebApp);
+}
+
+/** Best-effort: expand viewport and signal readiness — helps some clients (notably iOS) populate ``initData`` sooner. */
+function primeTelegramWebAppForInitData() {
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return;
+  try {
+    tg.ready?.();
+  } catch {
+    /* ignore */
+  }
+  try {
+    tg.expand?.();
+  } catch {
+    /* ignore */
+  }
+}
+
 function persistTelegramUserSession(sess) {
   const v = (sess || "").trim();
   if (!v) return;
@@ -207,29 +228,45 @@ function storedTelegramUserSession() {
 }
 
 /** Max wait for initData before POST /api/mini-app/session when no tg_user_sess yet (cold start). */
-const MINI_APP_SESSION_INIT_WAIT_MS = 2_000;
+const MINI_APP_SESSION_INIT_WAIT_MS = 900;
+const MINI_APP_SESSION_INIT_WAIT_IN_TG_MS = 8_000;
+
+function miniAppSessionInitWaitMs() {
+  if (storedTelegramUserSession().trim()) return 0;
+  return isTelegramWebAppShell() ? MINI_APP_SESSION_INIT_WAIT_IN_TG_MS : MINI_APP_SESSION_INIT_WAIT_MS;
+}
 
 async function bootstrapMiniAppSession() {
   captureTelegramUserSessionFromUrl();
-  window.Telegram?.WebApp?.ready?.();
+  primeTelegramWebAppForInitData();
   let initData = telegramInitData();
   // Stored bot session authenticates without initData — do not block on a long initData poll.
   if (!initData && !storedTelegramUserSession().trim()) {
-    initData = await waitForTelegramInitData(MINI_APP_SESSION_INIT_WAIT_MS);
+    initData = await waitForTelegramInitData(miniAppSessionInitWaitMs());
   }
   const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
   const path = "/api/mini-app/session";
   const url = base ? `${base}${path}` : path;
-  const fetchUrl = appendTelegramContextQuery(url, initData || telegramInitData());
-  try {
-    const res = await fetch(fetchUrl, {
+  const postSession = async () => {
+    const id = telegramInitData() || initData || "";
+    const fetchUrl = appendTelegramContextQuery(url, id);
+    return fetch(fetchUrl, {
       method: "POST",
       headers: jsonHeaders(),
       body: JSON.stringify({
-        telegram_init_data: telegramInitData() || initData || "",
+        telegram_init_data: id,
         telegram_user_session: storedTelegramUserSession(),
       }),
     });
+  };
+  try {
+    let res = await postSession();
+    // initData can appear after the first POST attempt (iOS / StrictMode races) — one short wait + retry.
+    if (!res.ok && res.status === 401 && isTelegramWebAppShell() && !storedTelegramUserSession().trim()) {
+      await waitForTelegramInitData(2_500);
+      initData = telegramInitData() || initData;
+      res = await postSession();
+    }
     if (!res.ok) return;
     const data = await res.json();
     const tok = typeof data?.tg_user_sess === "string" ? data.tg_user_sess.trim() : "";
@@ -245,6 +282,14 @@ const TELEGRAM_INIT_FALLBACK_MS = 900;
 /** Telegram often fills initData shortly after load — optional short wait when headers would otherwise be empty. */
 function waitForTelegramInitData(maxMs = TELEGRAM_INIT_FALLBACK_MS, intervalMs = 16) {
   return new Promise((resolve) => {
+    const tg = window.Telegram?.WebApp;
+    if (tg?.expand && !telegramInitData()) {
+      try {
+        tg.expand();
+      } catch {
+        /* ignore */
+      }
+    }
     const start = Date.now();
     let done = false;
     let intervalId = 0;
@@ -252,6 +297,16 @@ function waitForTelegramInitData(maxMs = TELEGRAM_INIT_FALLBACK_MS, intervalMs =
       if (done) return;
       done = true;
       window.clearInterval(intervalId);
+      try {
+        tg?.offEvent?.("viewport_changed", check);
+      } catch {
+        /* ignore */
+      }
+      try {
+        tg?.offEvent?.("theme_changed", check);
+      } catch {
+        /* ignore */
+      }
       resolve(value);
     };
     const check = () => {
@@ -266,7 +321,8 @@ function waitForTelegramInitData(maxMs = TELEGRAM_INIT_FALLBACK_MS, intervalMs =
     };
     intervalId = window.setInterval(check, intervalMs);
     check();
-    window.Telegram?.WebApp?.onEvent?.("viewport_changed", check);
+    tg?.onEvent?.("viewport_changed", check);
+    tg?.onEvent?.("theme_changed", check);
   });
 }
 
@@ -410,6 +466,8 @@ const content = {
     purchaseHistoryAuthHint:
       "לא ניתן לזהות את המשתמש. פתחו את המיני־אפ מהבוט או מהקישור בהודעה, המתינו כמה שניות עד שטלגרם מסיים לטעון, ונסו שוב. רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
     purchaseHistoryRetry: "נסה שוב",
+    redeemTelegramContextRequired:
+      "יש לפתוח את המיני־אפ מתוך טלגרם (כפתור או קישור מהבוט) כדי לזהות אתכם ולשלוח את הקובץ לצ׳אט. אם כבר בתוך טלגרם — המתינו מספר שניות ונסו שוב, או לחצו שוב על כפתור האפליקציה.",
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -478,6 +536,8 @@ const content = {
     purchaseHistoryAuthHint:
       "تعذر التعرف على المستخدم. افتحوا التطبيق المصغّر من البوت أو من الرابط في رسالة البوت، انتظروا بضع ثوانٍ حتى يكتمل تحميل تيليجرام، ثم أعيدوا المحاولة. التحديث العادي في المتصفح لا يجدّد المصادقة دائمًا.",
     purchaseHistoryRetry: "إعادة المحاولة",
+    redeemTelegramContextRequired:
+      "يجب فتح التطبيق المصغّر من داخل تيليجرام (زر أو رابط من البوت) ليتم التعرّف عليكم وإرسال الملف إلى المحادثة. إن كنتم داخل تيليجرام بالفعل — انتظروا بضع ثوانٍ وأعيدوا المحاولة، أو اضغطوا زر التطبيق مرة أخرى.",
   },
 };
 
@@ -547,11 +607,12 @@ const App = () => {
       };
 
       let res = await fetchOnce();
-      // initData sometimes appears after the first paint — one delayed retry reduces false 401s.
+      // initData sometimes appears after the first paint — wait, refresh session, then retry.
       if (res.status === 401) {
-        window.Telegram?.WebApp?.ready?.();
+        primeTelegramWebAppForInitData();
         captureTelegramUserSessionFromUrl();
         await waitForTelegramInitData(4000);
+        await bootstrapMiniAppSession();
         res = await fetchOnce();
       }
 
@@ -593,28 +654,41 @@ const App = () => {
     if (!telegramInitData() && !storedTelegramUserSession()) {
       await waitForTelegramInitData(5000);
     }
-    await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
+    await bootstrapMiniAppSession();
+    await loadPurchaseHistory();
   };
 
   useEffect(() => {
+    let active = true;
     captureTelegramUserSessionFromUrl();
-    window.Telegram?.WebApp?.ready?.();
+    primeTelegramWebAppForInitData();
     void (async () => {
-      await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
+      await bootstrapMiniAppSession();
+      if (!active) return;
+      await loadPurchaseHistory();
     })();
+    return () => {
+      active = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (paymentApproved) {
-      loadPurchaseHistory();
+      void (async () => {
+        await bootstrapMiniAppSession();
+        await loadPurchaseHistory();
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentApproved]);
 
   useEffect(() => {
     if (cryptoStatus === "paid") {
-      loadPurchaseHistory();
+      void (async () => {
+        await bootstrapMiniAppSession();
+        await loadPurchaseHistory();
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cryptoStatus]);
@@ -945,10 +1019,15 @@ const App = () => {
     }
     setPaymentCodeSubmitting(true);
     try {
+      captureTelegramUserSessionFromUrl();
       window.Telegram?.WebApp?.ready?.();
       await bootstrapMiniAppSession();
       if (!telegramInitData() && !storedTelegramUserSession()) {
-        await waitForTelegramInitData();
+        await waitForTelegramInitData(5000);
+      }
+      if (!telegramInitData() && !storedTelegramUserSession()) {
+        setPaymentCodeError(t.redeemTelegramContextRequired);
+        return;
       }
       const initData = telegramInitData();
       const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
