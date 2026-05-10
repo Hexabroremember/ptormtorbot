@@ -252,6 +252,8 @@ const content = {
       fullNameEn: "שם מלא באנגלית",
       idNumber: "מספר זהות",
       expiryDate: "תקופת תוקף ועלות הנפקה",
+      expiryDateNote:
+        "אין תשלום בשלב הזה: קודם תראו דוגמה לטופס בלי לשלם, ורק אחר כך, בשלב התשלום הנפרד, תשלמו על ההנפקה.",
       expiryPrintedHint: "תאריך שיודפס בטופס (לפי הבחירה)",
     },
     placeholders: {
@@ -388,6 +390,8 @@ const content = {
       fullNameEn: "الاسم الكامل بالإنجليزية",
       idNumber: "رقم الهوية",
       expiryDate: "فترة صلاحية الشهادة",
+      expiryDateNote:
+        "لا يوجد دفع في هذه الخطوة: أولًا معاينة للنموذج دون دفع، ثم لاحقًا في خطوة الدفع المنفصلة تدفعون رسوم الإصدار.",
       expiryPrintedHint: "التاريخ في النموذج (حسب الاختيار)",
     },
     placeholders: {
@@ -1304,10 +1308,17 @@ const App = () => {
                 </div>
               </div>
               <div className="md:col-span-2 space-y-3 pt-2">
-                <label className="text-sm font-semibold text-slate-600 flex items-center gap-2">
-                  <Coins size={16} className="text-amber-500" />
-                  {t.labels.expiryDate}
-                </label>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold text-slate-600 flex items-center gap-2">
+                    <Coins size={16} className="text-amber-500" />
+                    {t.labels.expiryDate}
+                  </label>
+                  {t.labels.expiryDateNote ? (
+                    <p className="rounded-xl border border-blue-100 bg-blue-50/90 px-3 py-2 text-xs font-semibold leading-relaxed text-blue-900">
+                      {t.labels.expiryDateNote}
+                    </p>
+                  ) : null}
+                </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                   {expiryOptions.map((option) => (
                     <button
@@ -1639,7 +1650,7 @@ const App = () => {
       <header className="max-w-4xl mx-auto mb-8 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <div className="p-2.5 bg-blue-600 rounded-xl text-white shadow-lg shadow-blue-100">
-            <CreditCard size={24} />
+            <Ticket size={24} />
           </div>
           <h1 className="text-xl md:text-2xl font-bold text-slate-800 tracking-tight">
             {t.title}
