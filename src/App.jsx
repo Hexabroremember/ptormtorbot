@@ -16,6 +16,7 @@ import {
   Apple,
   Ticket,
   Download,
+  CircleHelp,
 } from 'lucide-react';
 
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -258,12 +259,13 @@ async function bootstrapMiniAppSession(opts = {}) {
   const postSession = async () => {
     const id = telegramInitData() || initData || "";
     const fetchUrl = appendTelegramContextQuery(url, id);
+    const sess = storedTelegramUserSession();
     return fetch(fetchUrl, {
       method: "POST",
-      headers: jsonHeaders(),
+      headers: jsonHeaders({}, { initData: id, userSession: sess }),
       body: JSON.stringify({
         telegram_init_data: id,
-        telegram_user_session: storedTelegramUserSession(),
+        telegram_user_session: sess,
       }),
     });
   };
@@ -349,9 +351,13 @@ function appendTelegramContextQuery(url, initData) {
   return `${url}${sep}${params.join("&")}`;
 }
 
-export function jsonHeaders(extra = {}) {
-  const initData = telegramInitData();
-  const userSession = storedTelegramUserSession();
+/**
+ * @param {Record<string, string>} [extra]
+ * @param {{ initData?: string; userSession?: string }} [ctx] Optional overrides so headers match the same snapshot as JSON body / query (avoids races with ``telegramInitData()``).
+ */
+export function jsonHeaders(extra = {}, ctx = {}) {
+  const initData = ctx.initData !== undefined ? ctx.initData : telegramInitData();
+  const userSession = ctx.userSession !== undefined ? ctx.userSession : storedTelegramUserSession();
   return {
     "Content-Type": "application/json",
     ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
@@ -476,6 +482,29 @@ const content = {
     purchaseHistoryRetry: "נסה שוב",
     redeemTelegramContextRequired:
       "יש לפתוח את המיני־אפ מתוך טלגרם (כפתור או קישור מהבוט) כדי לזהות אתכם ולשלוח את הקובץ לצ׳אט. אם כבר בתוך טלגרם — המתינו מספר שניות ונסו שוב, או לחצו שוב על כפתור האפליקציה.",
+    faqTitle: "שאלות נפוצות",
+    faqItems: [
+      {
+        q: "מה עושה הכלי הזה (המיני־אפ)?",
+        a:
+          "מיני־אפליקציה בטלגרם שמנפיקה עבורכם קובץ PDF של תעודה/טופס דיגיטלי לפי הפרטים שמילאתם: שם מלא בעברית ובאנגלית, מספר זהות ותקופת תוקף. תקבלו תצוגה מקדימה לפני התשלום, ואחרי אישור תשלום או הזנת קוד אישור תוכלו להוריד את הקובץ הסופי. ניתן גם לחזור להורדה דרך רשימת הרכישות למעלה.",
+      },
+      {
+        q: "מה זה «פטור מתור» בהקשר הישראלי?",
+        a:
+          "בעברית יומיומית «תור» מתייחסים לעיתים לשירות בצבא או במילואים, או לשיבוץ לתור לשירות. «פטור מתור» הוא מצב שבו גורם מוסמך קובע שאינכם חייבים להתייצב לשירות או שמותר לכם להימנע ממנו לפי הכללים הרלוונטיים. הכלי כאן מייצר עבורכם את המסמך הדיגיטלי עם פרטיכם (שמות, זהות, תאריך תפוגה) — יש לוודא מול הגורם שאליו אתם מגישים (מעסיק, מוסד לימודים, גוף רשמי וכו') שהמסמך עונה על דרישותיו.",
+      },
+      {
+        q: "לאן אפשר להיכנס או להשתמש בתעודה?",
+        a:
+          "בדרך כלל מציגים או מגישים את המסמך מול מעסיק (תיאום משמרות, חופשות או שיבוץ), מוסדות חינוך והשכלה, ארגונים שדורשים אסמכתא בכתב, או כשיש צורך להציג מסמך רשמי בנושא שירות — לפי מה שהגורם המבקש מפרט. השימוש הספציפי תלוי בדרישות אותו גורם.",
+      },
+      {
+        q: "איך זה יכול לשפר לכם את היום־יום?",
+        a:
+          "מקבלים PDF מוכן להורדה בטלפון, בלי לרדוף אחרי עותק בכל פעם; אפשר להוריד שוב מהיסטוריה, לטעון פרטים לטופס חדש כשצריך לעדכן תוקף, ולבצע את כל התהליך מתוך טלגרם — מהיר, מאורגן ונוח למובייל.",
+      },
+    ],
   },
   ar: {
     title: "إصدار شهادة رقمية",
@@ -546,6 +575,29 @@ const content = {
     purchaseHistoryRetry: "إعادة المحاولة",
     redeemTelegramContextRequired:
       "يجب فتح التطبيق المصغّر من داخل تيليجرام (زر أو رابط من البوت) ليتم التعرّف عليكم وإرسال الملف إلى المحادثة. إن كنتم داخل تيليجرام بالفعل — انتظروا بضع ثوانٍ وأعيدوا المحاولة، أو اضغطوا زر التطبيق مرة أخرى.",
+    faqTitle: "أسئلة شائعة",
+    faqItems: [
+      {
+        q: "ماذا تفعل هذه الأداة (التطبيق المصغّر)?",
+        a:
+          "تطبيق مصغّر داخل تيليجرام يصدر ملف PDF لشهادة/نموذج رقمي وفق بياناتكم: الاسم الكامل بالعبرية والإنجليزية، رقم الهوية ومدة الصلاحية. تظهر معاينة قبل الدفع، وبعد تأكيد الدفع أو إدخال رمز الموافقة يمكن تنزيل الملف النهائي. يمكن أيضًا إعادة التنزيل من سجلّ المشتريات.",
+      },
+      {
+        q: "ما معنى «الإعفاء من الطابور» في السياق الإسرائيلي؟",
+        a:
+          "في اللغة اليومية يُقصد غالبًا بالخدمة في الجيش أو الاحتياط، أو بالتسديد لموعد خدمة. الإعفاء يعني أن جهة مخوّلة تقرر أنكم غير ملزمين بالحضور أو أنكم معفون وفق القواعد. الأداة هنا تُنشئ المستند الرقمي ببياناتكم — يجب التأكد لدى الجهة التي تقدمون لها الملف (صاحب عمل، مؤسسة تعليم، جهة رسمية) أنه يلبي متطلباتها.",
+      },
+      {
+        q: "أين يمكن استخدام هذه الوثيقة؟",
+        a:
+          "غالبًا تُعرض أو تُقدَّم لصاحب عمل (تنسيق الورديات أو الإجازات)، مؤسسات تعليم، جهات تطلب إثباتًا كتابيًا، أو عند الحاجة لمستند رسمي يتعلق بالخدمة — حسب ما تحدده الجهة المطلوبة.",
+      },
+      {
+        q: "كيف يساعد ذلك في الحياة اليومية؟",
+        a:
+          "تحصلون على PDF جاهز للتنزيل على الهاتف دون مطاردة نسخة في كل مرة؛ يمكن إعادة التنزيل من السجلّ، تحميل البيانات إلى نموذج جديد عند تحديث المدة، وإتمام كل ذلك من تيليجرام — سريع ومنظم ومريح على الجوال.",
+      },
+    ],
   },
 };
 
@@ -610,7 +662,7 @@ const App = () => {
       const fetchOnce = async () => {
         const initData = telegramInitData();
         return fetch(appendTelegramContextQuery(buildPurchaseHistoryApiUrl(), initData), {
-          headers: jsonHeaders(),
+          headers: jsonHeaders({}, { initData }),
         });
       };
 
@@ -671,15 +723,9 @@ const App = () => {
     captureTelegramUserSessionFromUrl();
     primeTelegramWebAppForInitData();
     void (async () => {
-      const hasQuickCtx =
-        Boolean(telegramInitData().trim()) || Boolean(storedTelegramUserSession().trim());
-      if (hasQuickCtx) {
-        await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
-      } else {
-        await bootstrapMiniAppSession();
-        if (!active) return;
-        await loadPurchaseHistory();
-      }
+      await bootstrapMiniAppSession();
+      if (!active) return;
+      await loadPurchaseHistory();
     })();
     return () => {
       active = false;
@@ -793,17 +839,19 @@ const App = () => {
       }
       try {
         const idDigits = formData.idNumber.replace(/\D/g, "");
-        const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData()), {
+        const initData = telegramInitData();
+        const sess = storedTelegramUserSession();
+        const res = await fetch(appendTelegramContextQuery(buildPdfApiUrl(), initData), {
           method: "POST",
-          headers: jsonHeaders(),
+          headers: jsonHeaders({}, { initData, userSession: sess }),
           body: JSON.stringify({
             hebrew_full_name: formData.fullName.trim(),
             english_full_name: formData.fullNameEn.trim().toUpperCase(),
             id_number: idDigits,
             expiration_date: computeExpirationForPdf(formData.expiryOption),
             watermark: true,
-            telegram_init_data: telegramInitData() || "",
-            telegram_user_session: storedTelegramUserSession(),
+            telegram_init_data: initData || "",
+            telegram_user_session: sess,
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
@@ -918,9 +966,10 @@ const App = () => {
         const tg = window.Telegram?.WebApp;
         const tgUser = tg?.initDataUnsafe?.user;
         const initData = telegramInitData();
+        const sess = storedTelegramUserSession();
         const res = await fetch(appendTelegramContextQuery(buildCryptoApiUrl("/api/crypto/create-invoice"), initData), {
           method: "POST",
-          headers: jsonHeaders(),
+          headers: jsonHeaders({}, { initData, userSession: sess }),
           body: JSON.stringify({
             price_ils: Number(formData.expiryOption),
             expiry_option: formData.expiryOption,
@@ -935,7 +984,7 @@ const App = () => {
               expiry_option: formData.expiryOption,
             },
             telegram_init_data: initData || "",
-            telegram_user_session: storedTelegramUserSession(),
+            telegram_user_session: sess,
           }),
         });
         if (!res.ok) {
@@ -1000,10 +1049,12 @@ const App = () => {
     setPurchasePdfDownloading(item.ref);
     setPurchaseHistoryError(null);
     try {
-      const pdfUrl = appendTelegramContextQuery(buildPurchaseHistoryPdfUrl(), telegramInitData());
+      const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
+      const pdfUrl = appendTelegramContextQuery(buildPurchaseHistoryPdfUrl(), initData);
       const res = await fetch(pdfUrl, {
         method: "POST",
-        headers: jsonHeaders(),
+        headers: jsonHeaders({}, { initData, userSession: sess }),
         body: JSON.stringify({ ref: item.ref }),
       });
       if (!res.ok) {
@@ -1060,11 +1111,12 @@ const App = () => {
       // Inside Telegram: always attempt redeem — server validates; avoids false negatives when initData is late.
 
       const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
       const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
       const idDigits = formData.idNumber.replace(/\D/g, "");
       const res = await fetch(redeemUrl, {
         method: "POST",
-        headers: jsonHeaders(),
+        headers: jsonHeaders({}, { initData, userSession: sess }),
         body: JSON.stringify({
           code: trimmed,
           form: {
@@ -1075,7 +1127,7 @@ const App = () => {
             expiry_option: formData.expiryOption,
           },
           telegram_init_data: initData || "",
-          telegram_user_session: storedTelegramUserSession(),
+          telegram_user_session: sess,
         }),
       });
       if (res.ok) {
@@ -1108,18 +1160,20 @@ const App = () => {
     setPaymentCodeError(null);
     try {
       const idDigits = formData.idNumber.replace(/\D/g, "");
-      const pdfUrl = appendTelegramContextQuery(buildPdfApiUrl(), telegramInitData());
+      const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
+      const pdfUrl = appendTelegramContextQuery(buildPdfApiUrl(), initData);
       const res = await fetch(pdfUrl, {
         method: "POST",
-        headers: jsonHeaders(),
+        headers: jsonHeaders({}, { initData, userSession: sess }),
         body: JSON.stringify({
           hebrew_full_name: formData.fullName.trim(),
           english_full_name: formData.fullNameEn.trim().toUpperCase(),
           id_number: idDigits,
           expiration_date: computeExpirationForPdf(formData.expiryOption),
           watermark: false,
-          telegram_init_data: telegramInitData() || "",
-          telegram_user_session: storedTelegramUserSession(),
+          telegram_init_data: initData || "",
+          telegram_user_session: sess,
         }),
       });
       if (!res.ok) {
@@ -1209,6 +1263,29 @@ const App = () => {
                 <p className="text-sm text-slate-500">{t.purchaseHistoryEmpty}</p>
               ) : null}
             </div>
+            {Array.isArray(t.faqItems) && t.faqItems.length ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 md:p-5 space-y-3">
+                <h3 className="flex items-center gap-2 font-bold text-slate-800 text-lg">
+                  <CircleHelp className="shrink-0 text-blue-600" size={22} aria-hidden />
+                  {t.faqTitle}
+                </h3>
+                <div className="space-y-2">
+                  {t.faqItems.map((item, idx) => (
+                    <details
+                      key={idx}
+                      className="group rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm open:shadow-md transition-shadow"
+                    >
+                      <summary className="cursor-pointer list-none font-semibold text-slate-800 text-sm leading-snug pr-1 [&::-webkit-details-marker]:hidden">
+                        {item.q}
+                      </summary>
+                      <p className="mt-2 border-t border-slate-100 pt-2 text-sm leading-relaxed text-slate-600">
+                        {item.a}
+                      </p>
+                    </details>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {step1Error ? (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">
                 {step1Error}
