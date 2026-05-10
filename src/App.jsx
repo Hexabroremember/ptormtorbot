@@ -5,7 +5,8 @@ import {
   CheckCircle2, 
   Globe, 
   ChevronLeft, 
-  ChevronRight, 
+  ChevronRight,
+  ChevronDown,
   IdCard, 
   Languages, 
   Coins,
@@ -20,6 +21,20 @@ import {
 } from 'lucide-react';
 
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+import {
+  appendTelegramContextQuery,
+  bootstrapMiniAppSession,
+  captureTelegramUserSessionFromUrl,
+  storedTelegramUserSession,
+  isTelegramWebAppShell,
+  primeTelegramWebAppForInitData,
+  waitForTelegramInitData,
+  hasTelegramAuthContext,
+  openTelegramDeepLink,
+  telegramInitData,
+  jsonHeaders,
+} from "./telegramContext.js";
 
 function formatDateDdMmYyyy(d) {
   const dd = String(d.getDate()).padStart(2, "0");
@@ -168,205 +183,6 @@ async function renderPdfBlobToPreviewImageUrl(pdfBlob) {
 
 const TELEGRAM_CHANNEL_URL = "https://t.me/BituhLeumi";
 
-export function telegramInitData() {
-  return window.Telegram?.WebApp?.initData || "";
-}
-
-/** True when the page runs inside Telegram's WebApp bridge (initData may still be empty for a few ticks). */
-function isTelegramWebAppShell() {
-  return Boolean(window.Telegram?.WebApp);
-}
-
-/** Best-effort: expand viewport and signal readiness — helps some clients (notably iOS) populate ``initData`` sooner. */
-function primeTelegramWebAppForInitData() {
-  const tg = window.Telegram?.WebApp;
-  if (!tg) return;
-  try {
-    tg.ready?.();
-  } catch {
-    /* ignore */
-  }
-  try {
-    tg.expand?.();
-  } catch {
-    /* ignore */
-  }
-}
-
-function persistTelegramUserSession(sess) {
-  const v = (sess || "").trim();
-  if (!v) return;
-  try {
-    sessionStorage.setItem("telegramUserSession", v);
-    localStorage.setItem("telegramUserSession", v);
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Persist bot-signed user session from the Mini App URL; survives payment browser hops. */
-function captureTelegramUserSessionFromUrl() {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const sess = params.get("tg_user_sess");
-    if (!sess) return;
-    persistTelegramUserSession(sess);
-    params.delete("tg_user_sess");
-    const qs = params.toString();
-    const clean = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
-    window.history.replaceState({}, "", clean);
-  } catch {
-    /* ignore */
-  }
-}
-
-function storedTelegramUserSession() {
-  try {
-    return sessionStorage.getItem("telegramUserSession") || localStorage.getItem("telegramUserSession") || "";
-  } catch {
-    return "";
-  }
-}
-
-/** Max wait for initData before POST /api/mini-app/session when no tg_user_sess yet (cold start). */
-const MINI_APP_SESSION_INIT_WAIT_MS = 900;
-const MINI_APP_SESSION_INIT_WAIT_IN_TG_MS = 6_000;
-
-function miniAppSessionInitWaitMs() {
-  if (storedTelegramUserSession().trim()) return 0;
-  return isTelegramWebAppShell() ? MINI_APP_SESSION_INIT_WAIT_IN_TG_MS : MINI_APP_SESSION_INIT_WAIT_MS;
-}
-
-/**
- * @param {{ maxInitDataWaitMs?: number }} [opts]
- * When ``maxInitDataWaitMs`` is set, caps how long we poll for initData before the session POST (e.g. redeem should not sit on the default long poll twice).
- */
-async function bootstrapMiniAppSession(opts = {}) {
-  captureTelegramUserSessionFromUrl();
-  primeTelegramWebAppForInitData();
-  let initData = telegramInitData();
-  // Stored bot session authenticates without initData — do not block on a long initData poll.
-  if (!initData && !storedTelegramUserSession().trim()) {
-    const cap =
-      typeof opts.maxInitDataWaitMs === "number" ? opts.maxInitDataWaitMs : undefined;
-    const defaultMs = miniAppSessionInitWaitMs();
-    const ms = cap !== undefined ? Math.min(cap, defaultMs) : defaultMs;
-    initData = await waitForTelegramInitData(ms);
-  }
-  const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-  const path = "/api/mini-app/session";
-  const url = base ? `${base}${path}` : path;
-  const postSession = async () => {
-    const id = telegramInitData() || initData || "";
-    const fetchUrl = appendTelegramContextQuery(url, id);
-    const sess = storedTelegramUserSession();
-    return fetch(fetchUrl, {
-      method: "POST",
-      headers: jsonHeaders({}, { initData: id, userSession: sess }),
-      body: JSON.stringify({
-        telegram_init_data: id,
-        telegram_user_session: sess,
-      }),
-    });
-  };
-  try {
-    let res = await postSession();
-    // initData can appear after the first POST attempt (iOS / StrictMode races) — one short wait + retry.
-    if (!res.ok && res.status === 401 && isTelegramWebAppShell() && !storedTelegramUserSession().trim()) {
-      await waitForTelegramInitData(2_500);
-      initData = telegramInitData() || initData;
-      res = await postSession();
-    }
-    if (!res.ok) return;
-    const data = await res.json();
-    const tok = typeof data?.tg_user_sess === "string" ? data.tg_user_sess.trim() : "";
-    if (tok) persistTelegramUserSession(tok);
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Max wait when initData is still empty; bot session (tg_user_sess) needs no wait. */
-const TELEGRAM_INIT_FALLBACK_MS = 900;
-
-/** Telegram often fills initData shortly after load — optional short wait when headers would otherwise be empty. */
-function waitForTelegramInitData(maxMs = TELEGRAM_INIT_FALLBACK_MS, intervalMs = 16) {
-  return new Promise((resolve) => {
-    const tg = window.Telegram?.WebApp;
-    if (tg?.expand && !telegramInitData()) {
-      try {
-        tg.expand();
-      } catch {
-        /* ignore */
-      }
-    }
-    const start = Date.now();
-    let done = false;
-    let intervalId = 0;
-    const finish = (value) => {
-      if (done) return;
-      done = true;
-      window.clearInterval(intervalId);
-      try {
-        tg?.offEvent?.("viewport_changed", check);
-      } catch {
-        /* ignore */
-      }
-      try {
-        tg?.offEvent?.("theme_changed", check);
-      } catch {
-        /* ignore */
-      }
-      resolve(value);
-    };
-    const check = () => {
-      const d = telegramInitData();
-      if (d) {
-        finish(d);
-        return;
-      }
-      if (Date.now() - start >= maxMs) {
-        finish("");
-      }
-    };
-    intervalId = window.setInterval(check, intervalMs);
-    check();
-    tg?.onEvent?.("viewport_changed", check);
-    tg?.onEvent?.("theme_changed", check);
-  });
-}
-
-/** Append Telegram context as query params — some proxies strip custom headers on POST. */
-function appendTelegramContextQuery(url, initData) {
-  const params = [];
-  if (initData && !url.includes("tg_init_data=")) {
-    params.push(`tg_init_data=${encodeURIComponent(initData)}`);
-  }
-  const sess = storedTelegramUserSession();
-  if (sess && !url.includes("tg_user_sess=")) {
-    params.push(`tg_user_sess=${encodeURIComponent(sess)}`);
-  }
-  if (!params.length) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}${params.join("&")}`;
-}
-
-/**
- * @param {Record<string, string>} [extra]
- * @param {{ initData?: string; userSession?: string }} [ctx] Optional overrides so headers match the same snapshot as JSON body / query (avoids races with ``telegramInitData()``).
- */
-export function jsonHeaders(extra = {}, ctx = {}) {
-  const initData = ctx.initData !== undefined ? ctx.initData : telegramInitData();
-  const userSession = ctx.userSession !== undefined ? ctx.userSession : storedTelegramUserSession();
-  return {
-    "Content-Type": "application/json",
-    ...(initData ? { "X-Telegram-Init-Data": initData } : {}),
-    ...(initData ? { Authorization: `TMA ${initData}` } : {}),
-    ...(userSession ? { "X-Telegram-User-Sess": userSession } : {}),
-    ...extra,
-  };
-}
-
 function TelegramIcon({ className, size = 22 }) {
   return (
     <svg
@@ -479,9 +295,16 @@ const content = {
     purchaseHistoryUnavailable: "חסרים נתונים להפקת הקובץ — פנו לתמיכה.",
     purchaseHistoryAuthHint:
       "לא ניתן לזהות את המשתמש. פתחו את המיני־אפ מהבוט או מהקישור בהודעה, המתינו כמה שניות עד שטלגרם מסיים לטעון, ונסו שוב. רענון רגיל בדפדפן לא תמיד מחדש את האימות.",
+    purchaseHistoryAuthHintBrowser:
+      "נפתח דפדפן רגיל — אין חתימת טלגרם (initData). פתחו את המיני־אפ מתוך טלגרם דרך הבוט (כפתור או הקישור בהודעה). דפדפן חיצוני לא יכול לשלוח את נתוני האימות.",
     purchaseHistoryRetry: "נסה שוב",
+    miniAppOutsideTelegramBannerTitle: "נפתח בדפדפן רגיל במקום בתוך טלגרם",
+    miniAppOutsideTelegramBannerBody:
+      "האימות מטלגרם (initData) זמין רק כשרצים את האפליקציה בתוך טלגרם. יש לפתוח מהבוט — כפתור המיני־אפ בצ׳אט או הקישור בהודעה.",
+    miniAppOpenMiniAppCta: "פתיחת הבוט / המיני־אפ",
+    miniAppOutsideTelegramDismiss: "הסתר",
     redeemTelegramContextRequired:
-      "יש לפתוח את המיני־אפ מתוך טלגרם (כפתור או קישור מהבוט) כדי לזהות אתכם ולשלוח את הקובץ לצ׳אט. אם כבר בתוך טלגרם — המתינו מספר שניות ונסו שוב, או לחצו שוב על כפתור האפליקציה.",
+      "דפדפן רגיל לא שולח את נתוני האימות של טלגרם. פתחו את המיני־אפ מתוך טלגרם (כפתור בבוט או קישור מההודעה), או את הקישור המלא מהבוט כולל הפרמטר לזיהוי.",
     faqTitle: "שאלות נפוצות",
     faqItems: [
       {
@@ -602,9 +425,16 @@ const content = {
     purchaseHistoryUnavailable: "بيانات غير كافية لإنشاء الملف — تواصل مع الدعم.",
     purchaseHistoryAuthHint:
       "تعذر التعرف على المستخدم. افتحوا التطبيق المصغّر من البوت أو من الرابط في رسالة البوت، انتظروا بضع ثوانٍ حتى يكتمل تحميل تيليجرام، ثم أعيدوا المحاولة. التحديث العادي في المتصفح لا يجدّد المصادقة دائمًا.",
+    purchaseHistoryAuthHintBrowser:
+      "تم فتح المتصفح العادي — لا يوجد توقيع تيليجرام (initData). افتحوا التطبيق المصغّر من داخل تيليجرام عبر البوت (زر أو رابط في الرسالة). لا يمكن للمتصفح الخارجي إرسال بيانات المصادقة.",
     purchaseHistoryRetry: "إعادة المحاولة",
+    miniAppOutsideTelegramBannerTitle: "تم الفتح في متصفح عادي وليس داخل تيليجرام",
+    miniAppOutsideTelegramBannerBody:
+      "مصادقة تيليجرام (initData) متاحة فقط عند تشغيل التطبيق داخل تيليجرام. افتحوا من البوت — زر التطبيق المصغّر في الدردشة أو الرابط في الرسالة.",
+    miniAppOpenMiniAppCta: "فتح البوت / التطبيق المصغّر",
+    miniAppOutsideTelegramDismiss: "إخفاء",
     redeemTelegramContextRequired:
-      "يجب فتح التطبيق المصغّر من داخل تيليجرام (زر أو رابط من البوت) ليتم التعرّف عليكم وإرسال الملف إلى المحادثة. إن كنتم داخل تيليجرام بالفعل — انتظروا بضع ثوانٍ وأعيدوا المحاولة، أو اضغطوا زر التطبيق مرة أخرى.",
+      "المتصفح العادي لا يرسل بيانات مصادقة تيليجرام. افتحوا التطبيق المصغّر من داخل تيليجرام (زر في البوت أو رابط في الرسالة)، أو استخدموا الرابط الكامل من البوت إن كان يتضمن معرّف الجلسة.",
     faqTitle: "أسئلة شائعة",
     faqItems: [
       {
@@ -683,6 +513,14 @@ const App = () => {
   const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState(false);
   const [purchaseHistoryError, setPurchaseHistoryError] = useState(null);
   const [purchasePdfDownloading, setPurchasePdfDownloading] = useState(null);
+  const [miniAppSessionChecked, setMiniAppSessionChecked] = useState(false);
+  const [outsideTelegramBannerDismissed, setOutsideTelegramBannerDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem("ptorOutsideTgBannerDismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -740,7 +578,10 @@ const App = () => {
         setPurchaseHistory([]);
         setPurchaseHistoryLoaded(true);
         if (res.status === 401) {
-          let hintMsg = content[language].purchaseHistoryAuthHint;
+          let hintMsg =
+            !isTelegramWebAppShell() && !hasTelegramAuthContext()
+              ? content[language].purchaseHistoryAuthHintBrowser
+              : content[language].purchaseHistoryAuthHint;
           try {
             const errBody = await res.json();
             const d = errBody.detail;
@@ -785,6 +626,7 @@ const App = () => {
     void (async () => {
       await bootstrapMiniAppSession();
       if (!active) return;
+      setMiniAppSessionChecked(true);
       await loadPurchaseHistory();
     })();
     return () => {
@@ -955,6 +797,21 @@ const App = () => {
   ];
 
   const t = content[language];
+
+  const showOutsideTelegramBanner =
+    miniAppSessionChecked &&
+    !outsideTelegramBannerDismissed &&
+    !isTelegramWebAppShell() &&
+    !hasTelegramAuthContext();
+
+  const dismissOutsideTelegramBanner = () => {
+    try {
+      sessionStorage.setItem("ptorOutsideTgBannerDismissed", "1");
+    } catch {
+      /* ignore */
+    }
+    setOutsideTelegramBannerDismissed(true);
+  };
 
   const handleInputChange = (field, value) => {
     setStep1Error(null);
@@ -1149,8 +1006,7 @@ const App = () => {
       primeTelegramWebAppForInitData();
 
       const inTgShell = isTelegramWebAppShell();
-      const hasRedeemCtx = () =>
-        Boolean(telegramInitData().trim()) || Boolean(storedTelegramUserSession().trim());
+      const hasRedeemCtx = () => hasTelegramAuthContext();
 
       // Outside Telegram with no bot session: server cannot tie redemption to a chat — block early.
       if (!inTgShell && !hasRedeemCtx()) {
@@ -1324,51 +1180,71 @@ const App = () => {
               ) : null}
             </div>
             {Array.isArray(t.faqItems) && t.faqItems.length ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-3 md:p-4 space-y-2">
-                <h3 className="flex items-center gap-2 font-bold text-slate-800 text-base leading-tight">
-                  <CircleHelp className="shrink-0 text-blue-600" size={20} aria-hidden />
-                  {t.faqTitle}
-                </h3>
-                <div className="max-h-[40vh] md:max-h-64 overflow-y-auto overscroll-contain rounded-xl border border-slate-200/80 bg-white/80 p-2 space-y-1">
-                  {t.faqItems.map((item, idx) => {
-                    const paras =
-                      Array.isArray(item.paragraphs) && item.paragraphs.length
-                        ? item.paragraphs
-                        : item.a
-                          ? [item.a]
-                          : [];
-                    return (
-                      <details
-                        key={idx}
-                        className="group rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm open:shadow transition-shadow"
-                      >
-                        <summary className="cursor-pointer list-none font-semibold text-slate-800 text-sm leading-snug pr-1 [&::-webkit-details-marker]:hidden">
-                          {item.q}
-                        </summary>
-                        <div className="mt-1.5 border-t border-slate-100 pt-1.5 text-sm leading-snug text-slate-600 space-y-1">
-                          {paras.map((p, pi) => (
-                            <p key={pi} className="whitespace-pre-line">
-                              {p}
-                            </p>
-                          ))}
-                          {Array.isArray(item.bullets) && item.bullets.length ? (
-                            <ul className="list-none space-y-0.5 pe-1 pt-0.5" role="list">
-                              {item.bullets.map((b, bi) => (
-                                <li key={bi} className="flex gap-1.5">
-                                  <span className="shrink-0 select-none" aria-hidden>
-                                    ✔️
-                                  </span>
-                                  <span>{b}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
-                        </div>
-                      </details>
-                    );
-                  })}
+              <section
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/90 shadow-sm"
+                dir={language === 'ar' || language === 'he' ? 'rtl' : 'ltr'}
+                lang={language === 'ar' ? 'ar' : 'he'}
+              >
+                <div className="sticky top-0 z-10 border-b border-slate-200/90 bg-slate-50/95 px-4 py-3 backdrop-blur-sm supports-[backdrop-filter]:bg-slate-50/85">
+                  <h3 className="flex items-center gap-2.5 text-lg font-bold leading-snug tracking-tight text-slate-900">
+                    <CircleHelp className="size-5 shrink-0 text-blue-600" aria-hidden />
+                    {t.faqTitle}
+                  </h3>
                 </div>
-              </div>
+                <div className="relative">
+                  <div className="max-h-[min(52vh,26rem)] overflow-y-auto overscroll-contain scroll-smooth px-3 py-1 pb-10 pt-0 md:max-h-[22rem]">
+                    <div className="divide-y divide-slate-200/90">
+                      {t.faqItems.map((item, idx) => {
+                        const paras =
+                          Array.isArray(item.paragraphs) && item.paragraphs.length
+                            ? item.paragraphs
+                            : item.a
+                              ? [item.a]
+                              : [];
+                        return (
+                          <details
+                            key={idx}
+                            className="group border-0 bg-transparent open:bg-blue-50/35"
+                          >
+                            <summary className="flex w-full cursor-pointer list-none items-start justify-between gap-3 py-3.5 ps-0.5 pe-1 text-start transition-colors hover:bg-slate-100/90 [&::-webkit-details-marker]:hidden">
+                              <span className="min-w-0 flex-1 text-base font-semibold leading-snug text-slate-900">
+                                {item.q}
+                              </span>
+                              <ChevronDown
+                                className="mt-0.5 size-5 shrink-0 text-slate-500 transition-transform duration-200 group-open:rotate-180"
+                                aria-hidden
+                              />
+                            </summary>
+                            <div className="border-t border-slate-200/70 bg-white/50 px-0.5 pb-4 pt-3">
+                              <div className="max-w-prose space-y-3 text-[15px] leading-relaxed text-slate-700">
+                                {paras.map((p, pi) => (
+                                  <p key={pi} className="whitespace-pre-line">
+                                    {p}
+                                  </p>
+                                ))}
+                                {Array.isArray(item.bullets) && item.bullets.length ? (
+                                  <ul className="list-none space-y-2 pt-0.5" role="list">
+                                    {item.bullets.map((b, bi) => (
+                                      <li key={bi} className="flex gap-2.5 leading-relaxed">
+                                        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-blue-500/80" aria-hidden />
+                                        <span>{b}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </div>
+                            </div>
+                          </details>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-14 bg-gradient-to-t from-slate-50 to-transparent"
+                    aria-hidden
+                  />
+                </div>
+              </section>
             ) : null}
             {step1Error ? (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">
@@ -1781,6 +1657,36 @@ const App = () => {
           </button>
         </div>
       </header>
+
+      {showOutsideTelegramBanner ? (
+        <div
+          className="max-w-4xl mx-auto mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 shadow-sm"
+          role="status"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <p className="font-bold">{t.miniAppOutsideTelegramBannerTitle}</p>
+              <p className="mt-1 text-xs text-amber-900/90">{t.miniAppOutsideTelegramBannerBody}</p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => openTelegramDeepLink(TELEGRAM_LINK)}
+                className="rounded-xl bg-[#229ED9] px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#1f8fc7]"
+              >
+                {t.miniAppOpenMiniAppCta}
+              </button>
+              <button
+                type="button"
+                onClick={dismissOutsideTelegramBanner}
+                className="rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-bold text-amber-950 transition-colors hover:bg-amber-100"
+              >
+                {t.miniAppOutsideTelegramDismiss}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <main className="max-w-4xl mx-auto">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">

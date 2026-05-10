@@ -2,7 +2,23 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "telegram-webApp-head-first",
+      transformIndexHtml(html) {
+        // Ensure telegram-web-app.js is first in <head> (Telegram's requirement)
+        html = html.replace(
+          /<script[^>]*src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"[^>]*><\/script>\s*/g,
+          ""
+        );
+        return html.replace(
+          "<head>",
+          '<head>\n    <script src="https://telegram.org/js/telegram-web-app.js"></script>'
+        );
+      },
+    },
+  ],
   server: {
     port: 5173,
     strictPort: true,

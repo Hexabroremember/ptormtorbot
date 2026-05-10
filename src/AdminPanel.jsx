@@ -17,14 +17,12 @@ import {
   Users,
 } from "lucide-react";
 
+import { telegramInitData } from "./telegramContext.js";
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 function apiUrl(path) {
   return API_BASE ? `${API_BASE}${path}` : path;
-}
-
-function telegramInitData() {
-  return window.Telegram?.WebApp?.initData || "";
 }
 
 /** Persist tg_sess from bot URL — authenticates as Telegram when initData is empty */
