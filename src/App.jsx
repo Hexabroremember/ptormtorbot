@@ -229,20 +229,28 @@ function storedTelegramUserSession() {
 
 /** Max wait for initData before POST /api/mini-app/session when no tg_user_sess yet (cold start). */
 const MINI_APP_SESSION_INIT_WAIT_MS = 900;
-const MINI_APP_SESSION_INIT_WAIT_IN_TG_MS = 8_000;
+const MINI_APP_SESSION_INIT_WAIT_IN_TG_MS = 6_000;
 
 function miniAppSessionInitWaitMs() {
   if (storedTelegramUserSession().trim()) return 0;
   return isTelegramWebAppShell() ? MINI_APP_SESSION_INIT_WAIT_IN_TG_MS : MINI_APP_SESSION_INIT_WAIT_MS;
 }
 
-async function bootstrapMiniAppSession() {
+/**
+ * @param {{ maxInitDataWaitMs?: number }} [opts]
+ * When ``maxInitDataWaitMs`` is set, caps how long we poll for initData before the session POST (e.g. redeem should not sit on the default long poll twice).
+ */
+async function bootstrapMiniAppSession(opts = {}) {
   captureTelegramUserSessionFromUrl();
   primeTelegramWebAppForInitData();
   let initData = telegramInitData();
   // Stored bot session authenticates without initData — do not block on a long initData poll.
   if (!initData && !storedTelegramUserSession().trim()) {
-    initData = await waitForTelegramInitData(miniAppSessionInitWaitMs());
+    const cap =
+      typeof opts.maxInitDataWaitMs === "number" ? opts.maxInitDataWaitMs : undefined;
+    const defaultMs = miniAppSessionInitWaitMs();
+    const ms = cap !== undefined ? Math.min(cap, defaultMs) : defaultMs;
+    initData = await waitForTelegramInitData(ms);
   }
   const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
   const path = "/api/mini-app/session";
@@ -663,9 +671,15 @@ const App = () => {
     captureTelegramUserSessionFromUrl();
     primeTelegramWebAppForInitData();
     void (async () => {
-      await bootstrapMiniAppSession();
-      if (!active) return;
-      await loadPurchaseHistory();
+      const hasQuickCtx =
+        Boolean(telegramInitData().trim()) || Boolean(storedTelegramUserSession().trim());
+      if (hasQuickCtx) {
+        await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
+      } else {
+        await bootstrapMiniAppSession();
+        if (!active) return;
+        await loadPurchaseHistory();
+      }
     })();
     return () => {
       active = false;
@@ -706,10 +720,10 @@ const App = () => {
       }
       return undefined;
     }
-    // Indeterminate-style ramp only until real milestones (blob / rasterize) bump progress.
+    // Indeterminate-style ramp until network / raster milestones bump progress (cap below final hops).
     const id = setInterval(() => {
-      setLoadingProgress((p) => (p >= 78 ? p : p + 1.15));
-    }, 45);
+      setLoadingProgress((p) => (p >= 91 ? p : p + 2.2));
+    }, 32);
     return () => clearInterval(id);
   }, [step2AwaitingPdf, previewImageUrl, pdfError]);
 
@@ -793,10 +807,10 @@ const App = () => {
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
-        setLoadingProgress((p) => Math.max(p, 80));
+        setLoadingProgress((p) => Math.max(p, 86));
         const blob = await res.blob();
         if (cancelled) return;
-        setLoadingProgress((p) => Math.max(p, 88));
+        setLoadingProgress((p) => Math.max(p, 94));
         const imageUrl = await renderPdfBlobToPreviewImageUrl(blob);
         if (cancelled) {
           URL.revokeObjectURL(imageUrl);
@@ -1021,14 +1035,30 @@ const App = () => {
     try {
       captureTelegramUserSessionFromUrl();
       window.Telegram?.WebApp?.ready?.();
-      await bootstrapMiniAppSession();
-      if (!telegramInitData() && !storedTelegramUserSession()) {
-        await waitForTelegramInitData(5000);
-      }
-      if (!telegramInitData() && !storedTelegramUserSession()) {
+      primeTelegramWebAppForInitData();
+
+      const inTgShell = isTelegramWebAppShell();
+      const hasRedeemCtx = () =>
+        Boolean(telegramInitData().trim()) || Boolean(storedTelegramUserSession().trim());
+
+      // Outside Telegram with no bot session: server cannot tie redemption to a chat — block early.
+      if (!inTgShell && !hasRedeemCtx()) {
         setPaymentCodeError(t.redeemTelegramContextRequired);
         return;
       }
+
+      const redeemCtxDeadline = Date.now() + 12_000;
+      await bootstrapMiniAppSession({ maxInitDataWaitMs: 4_500 });
+      if (!hasRedeemCtx() && inTgShell) {
+        await waitForTelegramInitData(Math.min(3_000, Math.max(0, redeemCtxDeadline - Date.now())));
+        await bootstrapMiniAppSession({ maxInitDataWaitMs: 5_000 });
+      }
+      if (!hasRedeemCtx() && inTgShell && Date.now() < redeemCtxDeadline) {
+        await new Promise((r) => setTimeout(r, Math.min(5_000, redeemCtxDeadline - Date.now())));
+        await bootstrapMiniAppSession({ maxInitDataWaitMs: 5_000 });
+      }
+      // Inside Telegram: always attempt redeem — server validates; avoids false negatives when initData is late.
+
       const initData = telegramInitData();
       const redeemUrl = appendTelegramContextQuery(buildRedeemApiUrl(), initData);
       const idDigits = formData.idNumber.replace(/\D/g, "");
