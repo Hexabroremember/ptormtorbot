@@ -305,17 +305,6 @@ const content = {
       "האימות מטלגרם (initData) זמין רק כשרצים את האפליקציה בתוך טלגרם. יש לפתוח מהבוט — כפתור המיני־אפ בצ׳אט או הקישור בהודעה.",
     miniAppOpenMiniAppCta: "פתיחת הבוט / המיני־אפ",
     miniAppOutsideTelegramDismiss: "הסתר",
-    miniAppHighlightsTitle: "📋 הנפקת פטור מתור",
-    miniAppHighlights: [
-      "📄 תצוגה מקדימה חיה לפני תשלום",
-      "⚡ תהליך מהיר ופשוט",
-      "⬇️ הורדה מיידית של קובץ PDF",
-      "📱 זמין ישירות מהטלפון",
-      "🔄 אפשר להוריד שוב בכל זמן",
-      "🌍 מתאים גם לשימוש בחו״ל",
-      "🔒 תהליך פרטי ונוח",
-      "🕒 מוכן תוך דקות",
-    ],
     redeemTelegramContextRequired:
       "דפדפן רגיל לא שולח את נתוני האימות של טלגרם. פתחו את המיני־אפ מתוך טלגרם (כפתור בבוט או קישור מההודעה), או את הקישור המלא מהבוט כולל הפרמטר לזיהוי.",
     faqTitle: "שאלות נפוצות",
@@ -453,17 +442,6 @@ const content = {
       "مصادقة تيليجرام (initData) متاحة فقط عند تشغيل التطبيق داخل تيليجرام. افتحوا من البوت — زر التطبيق المصغّر في الدردشة أو الرابط في الرسالة.",
     miniAppOpenMiniAppCta: "فتح البوت / التطبيق المصغّر",
     miniAppOutsideTelegramDismiss: "إخفاء",
-    miniAppHighlightsTitle: "📋 إصدار إعفاء من الطابور",
-    miniAppHighlights: [
-      "📄 معاينة حية قبل الدفع",
-      "⚡ عملية سريعة وبسيطة",
-      "⬇️ تنزيل فوري لملف PDF",
-      "📱 متاح مباشرة من الهاتف",
-      "🔄 يمكن تنزيل الملف مجددًا في أي وقت",
-      "🌍 مناسب أيضًا للاستخدام خارج البلاد",
-      "🔒 عملية خاصة ومريحة",
-      "🕒 جاهز خلال دقائق",
-    ],
     redeemTelegramContextRequired:
       "المتصفح العادي لا يرسل بيانات مصادقة تيليجرام. افتحوا التطبيق المصغّر من داخل تيليجرام (زر في البوت أو رابط في الرسالة)، أو استخدموا الرابط الكامل من البوت إن كان يتضمن معرّف الجلسة.",
     faqTitle: "أسئلة شائعة",
@@ -1729,27 +1707,6 @@ const App = () => {
             </div>
           </div>
         </div>
-      ) : null}
-
-      {isTelegramWebAppShell() ? (
-        <section
-          className="max-w-4xl mx-auto mb-6 rounded-2xl border border-blue-100 bg-gradient-to-b from-blue-50/80 to-white px-5 py-4 shadow-sm"
-          aria-labelledby="mini-app-highlights-title"
-        >
-          <h2
-            id="mini-app-highlights-title"
-            className="text-base font-bold text-slate-900 tracking-tight"
-          >
-            {t.miniAppHighlightsTitle}
-          </h2>
-          <ul className="mt-3 space-y-2 text-sm text-slate-700 list-none p-0 m-0">
-            {t.miniAppHighlights.map((line) => (
-              <li key={line} className="leading-snug">
-                {line}
-              </li>
-            ))}
-          </ul>
-        </section>
       ) : null}
 
       <main className="max-w-4xl mx-auto">
