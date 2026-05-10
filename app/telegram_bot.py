@@ -104,6 +104,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# /start notifications: add the bot as admin (post messages) in the channel.
+_START_NOTIFY_DEFAULT_CHAT_ID = "-1003569464018"
+
+
+def start_notify_chat_id() -> int | None:
+    """Target chat for owner alerts on ``/start``. Override ``TELEGRAM_START_NOTIFY_CHAT_ID``; set ``0`` to disable."""
+    raw = os.environ.get("TELEGRAM_START_NOTIFY_CHAT_ID", _START_NOTIFY_DEFAULT_CHAT_ID).strip()
+    if raw.lower() in ("", "0", "false", "off", "none", "-", "disable"):
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid TELEGRAM_START_NOTIFY_CHAT_ID: %r", raw)
+        return None
+
+
+async def notify_channel_on_bot_start(
+    context: ContextTypes.DEFAULT_TYPE,
+    user,
+) -> None:
+    """Post a short notice to the configured channel when a user sends ``/start``."""
+    chat_id = start_notify_chat_id()
+    if chat_id is None or user is None:
+        return
+    uname = f"@{html.escape(user.username)}" if user.username else "—"
+    fn = html.escape(user.first_name or "") or "—"
+    lang = html.escape(user.language_code or "") or "—"
+    text = (
+        "<b>🤖 משתמש שלח /start</b>\n"
+        f"<b>שם:</b> {fn}\n"
+        f"<b>משתמש:</b> {uname}\n"
+        f"<b>מזהה:</b> <code>{user.id}</code>\n"
+        f"<b>שפה:</b> {lang}"
+    )
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("notify_channel_on_bot_start failed chat_id=%s: %s", chat_id, exc)
+
 # True after first Conflict log — PTB may retry polling and emit many identical errors.
 _conflict_warning_emitted = False
 
@@ -452,6 +491,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         username=user.username if user else None,
         first_name=user.first_name if user else None,
     )
+    await notify_channel_on_bot_start(context, user)
     if mini_app_entry_url():
         context.user_data.clear()
         uid = user.id if user else None
