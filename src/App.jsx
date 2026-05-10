@@ -206,14 +206,15 @@ function storedTelegramUserSession() {
   }
 }
 
-/** Max wait for initData before POST /api/mini-app/session (Telegram often fills it shortly after load). */
-const MINI_APP_SESSION_INIT_WAIT_MS = 10_000;
+/** Max wait for initData before POST /api/mini-app/session when no tg_user_sess yet (cold start). */
+const MINI_APP_SESSION_INIT_WAIT_MS = 2_000;
 
 async function bootstrapMiniAppSession() {
   captureTelegramUserSessionFromUrl();
   window.Telegram?.WebApp?.ready?.();
   let initData = telegramInitData();
-  if (!initData) {
+  // Stored bot session authenticates without initData — do not block on a long initData poll.
+  if (!initData && !storedTelegramUserSession().trim()) {
     initData = await waitForTelegramInitData(MINI_APP_SESSION_INIT_WAIT_MS);
   }
   const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -592,22 +593,15 @@ const App = () => {
     if (!telegramInitData() && !storedTelegramUserSession()) {
       await waitForTelegramInitData(5000);
     }
-    await bootstrapMiniAppSession();
-    await loadPurchaseHistory();
+    await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
   };
 
   useEffect(() => {
     captureTelegramUserSessionFromUrl();
     window.Telegram?.WebApp?.ready?.();
-    let cancelled = false;
-    (async () => {
-      await bootstrapMiniAppSession();
-      if (cancelled) return;
-      await loadPurchaseHistory();
+    void (async () => {
+      await Promise.all([bootstrapMiniAppSession(), loadPurchaseHistory()]);
     })();
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -638,9 +632,10 @@ const App = () => {
       }
       return undefined;
     }
+    // Indeterminate-style ramp only until real milestones (blob / rasterize) bump progress.
     const id = setInterval(() => {
-      setLoadingProgress((p) => (p >= 92 ? p : p + 0.9));
-    }, 70);
+      setLoadingProgress((p) => (p >= 78 ? p : p + 1.15));
+    }, 45);
     return () => clearInterval(id);
   }, [step2AwaitingPdf, previewImageUrl, pdfError]);
 
@@ -724,12 +719,16 @@ const App = () => {
           }),
         });
         if (!res.ok) throw new Error(await parseError(res));
+        setLoadingProgress((p) => Math.max(p, 80));
         const blob = await res.blob();
+        if (cancelled) return;
+        setLoadingProgress((p) => Math.max(p, 88));
         const imageUrl = await renderPdfBlobToPreviewImageUrl(blob);
         if (cancelled) {
           URL.revokeObjectURL(imageUrl);
           return;
         }
+        setLoadingProgress(100);
         setPreviewImageUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return imageUrl;
@@ -1099,9 +1098,7 @@ const App = () => {
                 </div>
               ) : purchaseHistoryLoaded ? (
                 <p className="text-sm text-slate-500">{t.purchaseHistoryEmpty}</p>
-              ) : (
-                <p className="text-sm text-slate-500">{t.purchaseHistoryLoading}</p>
-              )}
+              ) : null}
             </div>
             {step1Error ? (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">
@@ -1216,7 +1213,9 @@ const App = () => {
                   style={{ width: `${loadingProgress}%` }}
                 ></div>
               </div>
-              <span className="text-xs font-mono text-blue-600 font-bold">{Math.round(loadingProgress)}%</span>
+              <span className="text-xs font-mono text-blue-600 font-bold">
+                {Math.min(100, Math.round(loadingProgress))}%
+              </span>
             </div>
           );
         }
