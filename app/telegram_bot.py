@@ -168,9 +168,6 @@ MSG_WEB_APP_START = (
     "🔒 תהליך פרטי ונוח\n"
     "🕒 מוכן תוך דקות"
 )
-MSG_REPLY_KEYBOARD_HINT = (
-    "⌨️ <b>ניתן לפתוח את הטופס גם מהכפתורים בתחתית המסך.</b>"
-)
 MSG_ERR_VALID = "⚠️ הנתונים אינם תקינים. נא לבדוק את השדות ולנסות שוב."
 MSG_ERR_GEN = (
     "❌ לא ניתן ליצור את הקובץ כעת.\n"
@@ -466,11 +463,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=inline,
         )
         if kb:
-            await update.message.reply_text(
-                MSG_REPLY_KEYBOARD_HINT,
-                parse_mode="HTML",
-                reply_markup=kb,
-            )
+            await update.message.reply_text("\u2060", reply_markup=kb)
         return ConversationHandler.END
     return await begin_chat_flow(update, context)
 
@@ -510,8 +503,7 @@ async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if bottom_kb:
                 await context.bot.send_message(
                     chat_id=chat.id,
-                    text=MSG_REPLY_KEYBOARD_HINT,
-                    parse_mode="HTML",
+                    text="\u2060",
                     reply_markup=bottom_kb,
                 )
         else:
@@ -530,11 +522,7 @@ async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 reply_markup=inline,
             )
             if bottom_kb:
-                await update.message.reply_text(
-                    MSG_REPLY_KEYBOARD_HINT,
-                    parse_mode="HTML",
-                    reply_markup=bottom_kb,
-                )
+                await update.message.reply_text("\u2060", reply_markup=bottom_kb)
         else:
             await update.message.reply_text(
                 MSG_START,
