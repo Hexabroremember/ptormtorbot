@@ -363,11 +363,12 @@ async def callback_issue_payment_code(
         await q.message.reply_text(
             "✅ <b>קוד אישור תשלום הונפק</b>\n\n"
             f"<b>סוג:</b> {html.escape(heading)}\n\n"
-            f"<pre>{html.escape(code)}</pre>\n\n"
+            f"<b>קוד:</b> <code>{html.escape(code)}</code>\n\n"
             "יש להעביר את הקוד ללקוח לאחר קבלת התשלום בפועל.\n"
             "הקוד מיועד לשימוש חד־פעמי בלבד.",
             parse_mode="HTML",
         )
+        await q.message.reply_text(f"<code>{html.escape(code)}</code>", parse_mode="HTML")
 
 
 def web_app_reply_keyboard() -> ReplyKeyboardMarkup | None:
