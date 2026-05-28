@@ -18,6 +18,8 @@ import {
   Ticket,
   Download,
   CircleHelp,
+  Send,
+  BadgePercent,
 } from 'lucide-react';
 
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -55,6 +57,11 @@ function apiOriginFromEnv() {
   return (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 }
 
+function isLocalDevOrigin() {
+  if (typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 /** Resolve API origin for ``/pdf-download/…`` links: env first, then fetch URL, then Response.url, then page. */
 function resolveApiOriginForPdf(fetchInputUrl, responseUrl) {
   const env = apiOriginFromEnv();
@@ -88,7 +95,7 @@ function resolvePdfDownloadHref(pathFromHeader, blobFallbackUrl, fetchInputUrl, 
 async function savePdfFromOkResponse(res, filename, fetchInputUrl) {
   const blob = await res.blob();
   const tg = window.Telegram?.WebApp;
-  const inTelegram = Boolean(tg);
+  const inTelegram = isTelegramWebAppShell();
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
   const dlHeader = res.headers.get("X-Pdf-Download-Path");
@@ -111,14 +118,22 @@ async function savePdfFromOkResponse(res, filename, fetchInputUrl) {
     }
   };
 
-  if (inTelegram && httpsHref) {
+  if (inTelegram && httpsHref && /^https:\/\//i.test(httpsHref)) {
     if (typeof tg.downloadFile === "function") {
-      tg.downloadFile(httpsHref, filename);
-      return;
+      try {
+        tg.downloadFile(httpsHref, filename);
+        return;
+      } catch {
+        /* fall through to local blob download */
+      }
     }
     if (typeof tg.openLink === "function") {
-      tg.openLink(httpsHref);
-      return;
+      try {
+        tg.openLink(httpsHref);
+        return;
+      } catch {
+        /* fall through to local blob download */
+      }
     }
   }
 
@@ -291,6 +306,7 @@ const content = {
     purchaseHistoryEmpty: "עדיין אין רכישות מושלמות — לאחר תשלום יופיעו כאן.",
     purchaseHistoryLoading: "טוען היסטוריה…",
     purchaseHistoryDownload: "הורד PDF",
+    purchaseHistoryResend: "שלח שוב לטלגרם",
     purchaseHistoryLoadForm: "טען לטופס",
     purchaseHistoryKindWithdraw: "קוד אישור",
     purchaseHistoryKindCrypto: "קריפטו",
@@ -300,6 +316,17 @@ const content = {
     purchaseHistoryAuthHintBrowser:
       "נפתח דפדפן רגיל — אין חתימת טלגרם (initData). פתחו את המיני־אפ מתוך טלגרם דרך הבוט (כפתור או הקישור בהודעה). דפדפן חיצוני לא יכול לשלוח את נתוני האימות.",
     purchaseHistoryRetry: "נסה שוב",
+    couponTitle: "קוד הנחה",
+    couponPlaceholder: "הזינו קופון",
+    couponApply: "החל",
+    couponApplied: "ההנחה הוחלה",
+    couponInvalid: "קוד ההנחה אינו תקין או פג תוקף.",
+    statusReceived: "הפרטים נקלטו",
+    statusWaitingPayment: "ממתין לתשלום",
+    statusPaymentApproved: "התשלום אושר",
+    statusPreparing: "המסמך בהכנה",
+    statusSent: "המסמך נשלח",
+    autosaveReady: "הטופס נשמר אוטומטית",
     miniAppOutsideTelegramBannerTitle: "נפתח בדפדפן רגיל במקום בתוך טלגרם",
     miniAppOutsideTelegramBannerBody:
       "האימות מטלגרם (initData) זמין רק כשרצים את האפליקציה בתוך טלגרם. יש לפתוח מהבוט — כפתור המיני־אפ בצ׳אט או הקישור בהודעה.",
@@ -428,6 +455,7 @@ const content = {
     purchaseHistoryEmpty: "لا توجد مشتريات مكتملة بعد — ستظهر هنا بعد الدفع.",
     purchaseHistoryLoading: "جاري التحميل…",
     purchaseHistoryDownload: "تنزيل PDF",
+    purchaseHistoryResend: "إرسال مجددًا إلى تلغرام",
     purchaseHistoryLoadForm: "تحميل إلى النموذج",
     purchaseHistoryKindWithdraw: "رمز تأكيد",
     purchaseHistoryKindCrypto: "كريبتو",
@@ -437,6 +465,17 @@ const content = {
     purchaseHistoryAuthHintBrowser:
       "تم فتح المتصفح العادي — لا يوجد توقيع تيليجرام (initData). افتحوا التطبيق المصغّر من داخل تيليجرام عبر البوت (زر أو رابط في الرسالة). لا يمكن للمتصفح الخارجي إرسال بيانات المصادقة.",
     purchaseHistoryRetry: "إعادة المحاولة",
+    couponTitle: "رمز خصم",
+    couponPlaceholder: "أدخل رمز الخصم",
+    couponApply: "تطبيق",
+    couponApplied: "تم تطبيق الخصم",
+    couponInvalid: "رمز الخصم غير صالح أو منتهي.",
+    statusReceived: "تم استلام التفاصيل",
+    statusWaitingPayment: "بانتظار الدفع",
+    statusPaymentApproved: "تم تأكيد الدفع",
+    statusPreparing: "المستند قيد التحضير",
+    statusSent: "تم إرسال المستند",
+    autosaveReady: "تم حفظ النموذج تلقائيًا",
     miniAppOutsideTelegramBannerTitle: "تم الفتح في متصفح عادي وليس داخل تيليجرام",
     miniAppOutsideTelegramBannerBody:
       "مصادقة تيليجرام (initData) متاحة فقط عند تشغيل التطبيق داخل تيليجرام. افتحوا من البوت — زر التطبيق المصغّر في الدردشة أو الرابط في الرسالة.",
@@ -527,7 +566,16 @@ const App = () => {
   const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState(false);
   const [purchaseHistoryError, setPurchaseHistoryError] = useState(null);
   const [purchasePdfDownloading, setPurchasePdfDownloading] = useState(null);
+  const [purchasePdfResending, setPurchasePdfResending] = useState(null);
   const [miniAppSessionChecked, setMiniAppSessionChecked] = useState(false);
+  const [autosaveState, setAutosaveState] = useState("idle");
+  const [couponInput, setCouponInput] = useState("");
+  const [couponQuote, setCouponQuote] = useState(null);
+  const [couponError, setCouponError] = useState(null);
+  const [couponApplying, setCouponApplying] = useState(false);
+  const formStartedLoggedRef = useRef(false);
+  const paymentScreenLoggedRef = useRef(false);
+  const openedLoggedRef = useRef(false);
   const [outsideTelegramBannerDismissed, setOutsideTelegramBannerDismissed] = useState(() => {
     try {
       return sessionStorage.getItem("ptorOutsideTgBannerDismissed") === "1";
@@ -536,13 +584,31 @@ const App = () => {
     }
   });
 
-  const [formData, setFormData] = useState({
-    fullName: "",
-    fullNameEn: "",
-    idNumber: "",
-    expiryOption: "",
-    birthDate: "",
-    idIssueDate: "",
+  const [formData, setFormData] = useState(() => {
+    try {
+      const raw = localStorage.getItem("ptorAutosaveDraft");
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === "object") {
+        return {
+          fullName: parsed.fullName || "",
+          fullNameEn: parsed.fullNameEn || "",
+          idNumber: parsed.idNumber || "",
+          expiryOption: parsed.expiryOption || "",
+          birthDate: parsed.birthDate || "",
+          idIssueDate: parsed.idIssueDate || "",
+        };
+      }
+    } catch {
+      /* ignore */
+    }
+    return {
+      fullName: "",
+      fullNameEn: "",
+      idNumber: "",
+      expiryOption: "",
+      birthDate: "",
+      idIssueDate: "",
+    };
   });
 
   const [previewImageUrl, setPreviewImageUrl] = useState(null);
@@ -565,6 +631,83 @@ const App = () => {
 
   /** Full-screen step 2 animation until preview JPEG exists or the request fails. */
   const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
+
+  const buildPdfApiUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/generate-pdf` : "/generate-pdf";
+  };
+
+  const buildRedeemApiUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/redeem-payment-code` : "/redeem-payment-code";
+  };
+
+  const buildPurchaseHistoryApiUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-purchase-history` : `/api/my-purchase-history`;
+  };
+
+  const buildPurchaseHistoryPdfUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-purchase-history/final-pdf` : `/api/my-purchase-history/final-pdf`;
+  };
+
+  const buildPurchaseHistoryResendUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-purchase-history/resend-pdf` : `/api/my-purchase-history/resend-pdf`;
+  };
+
+  const buildSavedFormsApiUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/my-saved-forms` : `/api/my-saved-forms`;
+  };
+
+  const buildClientEventApiUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/client-event` : `/api/client-event`;
+  };
+
+  const buildCouponValidateUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/coupons/validate` : `/api/coupons/validate`;
+  };
+
+  const hasAnyFormData = useMemo(
+    () =>
+      Boolean(
+        formData.fullName.trim() ||
+        formData.fullNameEn.trim() ||
+        formData.idNumber.trim() ||
+        formData.expiryOption,
+      ),
+    [formData]
+  );
+
+  const originalPrice = Number(formData.expiryOption || 0);
+  const discountIls = Number(couponQuote?.discount_ils || 0);
+  const finalPrice = originalPrice > 0 ? Math.max(1, Number(couponQuote?.final_price_ils ?? originalPrice)) : 0;
+
+  const sendClientEvent = async (eventType, extra = {}) => {
+    try {
+      const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
+      await fetch(appendTelegramContextQuery(buildClientEventApiUrl(), initData), {
+        method: "POST",
+        headers: jsonHeaders({}, { initData, userSession: sess }),
+        keepalive: true,
+        body: JSON.stringify({
+          event_type: eventType,
+          current_step: currentStep,
+          form: formData,
+          extra,
+          telegram_init_data: initData || "",
+          telegram_user_session: sess,
+        }),
+      });
+    } catch {
+      /* analytics only */
+    }
+  };
 
   const loadPurchaseHistory = async () => {
     captureTelegramUserSessionFromUrl();
@@ -641,6 +784,10 @@ const App = () => {
       await bootstrapMiniAppSession();
       if (!active) return;
       setMiniAppSessionChecked(true);
+      if (!openedLoggedRef.current) {
+        openedLoggedRef.current = true;
+        void sendClientEvent("mini_app_opened");
+      }
       await loadPurchaseHistory();
     })();
     return () => {
@@ -648,6 +795,62 @@ const App = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("ptorAutosaveDraft", JSON.stringify(formData));
+    } catch {
+      /* ignore */
+    }
+    setCouponQuote(null);
+    setCouponError(null);
+    if (!hasAnyFormData) return undefined;
+    if (!formStartedLoggedRef.current) {
+      formStartedLoggedRef.current = true;
+      void sendClientEvent("mini_app_form_started");
+    }
+    const id = window.setTimeout(async () => {
+      try {
+        setAutosaveState("saving");
+        const initData = telegramInitData();
+        const sess = storedTelegramUserSession();
+        const res = await fetch(appendTelegramContextQuery(buildSavedFormsApiUrl(), initData), {
+          method: "PUT",
+          headers: jsonHeaders({}, { initData, userSession: sess }),
+          body: JSON.stringify({
+            id: "autosave",
+            form: formData,
+            autosave: true,
+            telegram_init_data: initData || "",
+            telegram_user_session: sess,
+          }),
+        });
+        setAutosaveState(res.ok ? "saved" : "local");
+      } catch {
+        setAutosaveState("local");
+      }
+    }, 900);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, hasAnyFormData]);
+
+  useEffect(() => {
+    if (currentStep === 3 && !paymentScreenLoggedRef.current) {
+      paymentScreenLoggedRef.current = true;
+      void sendClientEvent("mini_app_payment_screen", { price_ils: originalPrice });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, originalPrice]);
+
+  useEffect(() => {
+    const onPageHide = () => {
+      if (paymentApproved || !hasAnyFormData || currentStep >= 3) return;
+      void sendClientEvent("mini_app_abandoned");
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, hasAnyFormData, paymentApproved, formData]);
 
   useEffect(() => {
     if (paymentApproved) {
@@ -688,26 +891,6 @@ const App = () => {
     }, 32);
     return () => clearInterval(id);
   }, [step2AwaitingPdf, previewImageUrl, pdfError]);
-
-  const buildPdfApiUrl = () => {
-    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    return base ? `${base}/generate-pdf` : "/generate-pdf";
-  };
-
-  const buildRedeemApiUrl = () => {
-    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    return base ? `${base}/redeem-payment-code` : "/redeem-payment-code";
-  };
-
-  const buildPurchaseHistoryApiUrl = () => {
-    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    return base ? `${base}/api/my-purchase-history` : `/api/my-purchase-history`;
-  };
-
-  const buildPurchaseHistoryPdfUrl = () => {
-    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    return base ? `${base}/api/my-purchase-history/final-pdf` : `/api/my-purchase-history/final-pdf`;
-  };
 
   useEffect(() => {
     if (currentStep !== 2) return undefined;
@@ -818,6 +1001,14 @@ const App = () => {
     !isTelegramWebAppShell() &&
     !hasTelegramAuthContext();
 
+  const statusItems = [
+    { label: t.statusReceived, done: currentStep > 1 || Boolean(previewImageUrl), active: currentStep === 1 },
+    { label: t.statusWaitingPayment, done: paymentApproved, active: currentStep === 3 && !paymentApproved },
+    { label: t.statusPaymentApproved, done: paymentApproved, active: paymentApproved },
+    { label: t.statusPreparing, done: Boolean(previewImageUrl), active: step2AwaitingPdf || finalPdfDownloading },
+    { label: t.statusSent, done: paymentApproved && !finalPdfDownloading, active: false },
+  ];
+
   const dismissOutsideTelegramBanner = () => {
     try {
       sessionStorage.setItem("ptorOutsideTgBannerDismissed", "1");
@@ -884,6 +1075,42 @@ const App = () => {
     return base ? `${base}${path}` : path;
   };
 
+  const handleApplyCoupon = async () => {
+    const code = couponInput.trim();
+    if (!code || !originalPrice) {
+      setCouponError(t.couponInvalid);
+      return;
+    }
+    setCouponApplying(true);
+    setCouponError(null);
+    try {
+      const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
+      const res = await fetch(appendTelegramContextQuery(buildCouponValidateUrl(), initData), {
+        method: "POST",
+        headers: jsonHeaders({}, { initData, userSession: sess }),
+        body: JSON.stringify({
+          code,
+          price_ils: originalPrice,
+          telegram_init_data: initData || "",
+          telegram_user_session: sess,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setCouponQuote(null);
+        setCouponError(t.couponInvalid);
+        return;
+      }
+      setCouponQuote(data);
+    } catch (e) {
+      setCouponQuote(null);
+      setCouponError(e.message || t.couponInvalid);
+    } finally {
+      setCouponApplying(false);
+    }
+  };
+
   const handlePaymentAction = async (method) => {
     if (method === 'crypto') {
       setCryptoSelected(true);
@@ -902,8 +1129,9 @@ const App = () => {
           method: "POST",
           headers: jsonHeaders({}, { initData, userSession: sess }),
           body: JSON.stringify({
-            price_ils: Number(formData.expiryOption),
+            price_ils: originalPrice,
             expiry_option: formData.expiryOption,
+            coupon_code: couponQuote?.ok ? couponQuote.code : null,
             telegram_user_id: tgUser?.id ?? null,
             username: tgUser?.username ?? null,
             first_name: tgUser?.first_name ?? null,
@@ -1001,6 +1229,32 @@ const App = () => {
     }
   };
 
+  const handleResendPurchasePdf = async (item) => {
+    if (!item?.downloadable || !item?.ref) {
+      setPurchaseHistoryError(t.purchaseHistoryUnavailable);
+      return;
+    }
+    setPurchasePdfResending(item.ref);
+    setPurchaseHistoryError(null);
+    try {
+      const initData = telegramInitData();
+      const sess = storedTelegramUserSession();
+      const res = await fetch(appendTelegramContextQuery(buildPurchaseHistoryResendUrl(), initData), {
+        method: "POST",
+        headers: jsonHeaders({}, { initData, userSession: sess }),
+        body: JSON.stringify({ ref: item.ref }),
+      });
+      if (!res.ok) {
+        const detail = await parseJsonDetail(res);
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      setPurchaseHistoryError(e.message || String(e));
+    } finally {
+      setPurchasePdfResending(null);
+    }
+  };
+
   const handleRedeemPaymentCode = async () => {
     setPaymentCodeError(null);
     const trimmed = paymentCodeInput.trim();
@@ -1022,8 +1276,8 @@ const App = () => {
       const inTgShell = isTelegramWebAppShell();
       const hasRedeemCtx = () => hasTelegramAuthContext();
 
-      // Outside Telegram with no bot session: server cannot tie redemption to a chat — block early.
-      if (!inTgShell && !hasRedeemCtx()) {
+      // Outside Telegram with no bot session: production cannot tie redemption to a chat.
+      if (!isLocalDevOrigin() && !inTgShell && !hasRedeemCtx()) {
         setPaymentCodeError(t.redeemTelegramContextRequired);
         return;
       }
@@ -1183,6 +1437,19 @@ const App = () => {
                             className="inline-flex min-w-[7rem] flex-1 items-center justify-center rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-bold text-blue-800 hover:bg-blue-50"
                           >
                             {t.purchaseHistoryLoadForm}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!item.downloadable || purchasePdfResending === item.ref}
+                            onClick={() => handleResendPurchasePdf(item)}
+                            className="inline-flex min-w-[7rem] flex-1 items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                          >
+                            {purchasePdfResending === item.ref ? (
+                              <Loader2 className="animate-spin" size={14} />
+                            ) : (
+                              <Send size={14} />
+                            )}
+                            {t.purchaseHistoryResend}
                           </button>
                         </div>
                       </div>
@@ -1562,11 +1829,51 @@ const App = () => {
               <div className="mt-4 p-4 bg-blue-50 rounded-2xl border border-blue-100 flex flex-col items-center">
                 <span className="text-sm text-blue-600 font-bold">{t.summary}</span>
                 <div className="flex items-baseline gap-1 mt-1">
+                  {discountIls > 0 ? (
+                    <span className="text-sm font-bold text-slate-400 line-through">
+                      ₪{originalPrice.toLocaleString()}
+                    </span>
+                  ) : null}
                   <span className="text-3xl font-black text-slate-900">
-                    ₪{Number(formData.expiryOption).toLocaleString()}
+                    ₪{finalPrice.toLocaleString()}
                   </span>
                 </div>
+                {discountIls > 0 ? (
+                  <span className="mt-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">
+                    {t.couponApplied}: ₪{discountIls.toLocaleString()}
+                  </span>
+                ) : null}
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-800">
+                <BadgePercent size={18} className="text-emerald-600" />
+                {t.couponTitle}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="text"
+                  dir="ltr"
+                  value={couponInput}
+                  onChange={(e) => {
+                    setCouponInput(e.target.value);
+                    setCouponError(null);
+                  }}
+                  placeholder={t.couponPlaceholder}
+                  className="min-w-0 flex-1 rounded-xl border border-emerald-100 bg-white px-3 py-2 text-center font-mono text-sm outline-none focus:border-emerald-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyCoupon}
+                  disabled={couponApplying || !couponInput.trim()}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {couponApplying ? <Loader2 size={16} className="animate-spin" /> : null}
+                  {t.couponApply}
+                </button>
+              </div>
+              {couponError ? <p className="mt-2 text-xs font-bold text-red-700">{couponError}</p> : null}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1740,6 +2047,31 @@ const App = () => {
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            {statusItems.map((item) => (
+              <span
+                key={item.label}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
+                  item.done
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : item.active
+                      ? "border-blue-200 bg-blue-50 text-blue-800"
+                      : "border-slate-200 bg-slate-50 text-slate-500"
+                }`}
+              >
+                {item.done ? <CheckCircle2 size={14} /> : item.active ? <Loader2 size={14} className="animate-spin" /> : null}
+                {item.label}
+              </span>
+            ))}
+            {autosaveState === "saved" || autosaveState === "local" ? (
+              <span className="ms-auto rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
+                {t.autosaveReady}
+              </span>
+            ) : null}
           </div>
         </div>
 

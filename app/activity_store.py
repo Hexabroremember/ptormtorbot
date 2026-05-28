@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.storage_connection import connect_storage, qp, use_postgres
@@ -82,6 +82,24 @@ def log_event(
             (utc_now_iso(), event_type, source, telegram_user_id, username, first_name, payload),
         )
         conn.commit()
+    try:
+        from app.admin_notifications import send_admin_event_notification
+
+        threading.Thread(
+            target=send_admin_event_notification,
+            kwargs={
+                "event_type": event_type,
+                "source": source,
+                "telegram_user_id": telegram_user_id,
+                "username": username,
+                "first_name": first_name,
+                "meta": meta or {},
+            },
+            daemon=True,
+        ).start()
+    except Exception:
+        # Owner notifications must never break the user-facing flow.
+        pass
 
 
 def list_events(
@@ -122,6 +140,24 @@ def list_events(
         "total": total,
         "items": [_event_row_to_dict(row) for row in rows],
     }
+
+
+def get_event(event_id: int) -> dict[str, Any] | None:
+    init_db()
+    with connect_storage() as conn:
+        row = conn.execute(
+            qp(
+                """
+                SELECT id, ts, event_type, source, telegram_user_id, username, first_name, meta_json
+                FROM events
+                WHERE id = ?
+                """
+            ),
+            (event_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _event_row_to_dict(row)
 
 
 def _day_expr() -> str:
@@ -183,6 +219,15 @@ def summary() -> dict[str, Any]:
             "total_redemptions": redeem_row["total_redemptions"] if redeem_row else 0,
             "distinct_redeemers": redeem_row["distinct_redeemers"] if redeem_row else 0,
         }
+        all_rows = conn.execute(
+            """
+            SELECT ts, event_type, meta_json
+            FROM events
+            ORDER BY id DESC
+            LIMIT 5000
+            """
+        ).fetchall()
+        business = _business_summary(all_rows)
     return {
         "total_events": total_events,
         "unique_users": unique_users,
@@ -190,7 +235,92 @@ def summary() -> dict[str, Any]:
         "by_day": list(reversed(by_day)),
         "recent": recent,
         "redeem_stats": redeem_stats,
+        "business": business,
     }
+
+
+def _price_from_meta(meta: dict[str, Any]) -> float:
+    for key in ("final_price_ils", "price_ils"):
+        try:
+            val = float(meta.get(key) or 0)
+            if val > 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+    red = meta.get("redemption")
+    if isinstance(red, dict):
+        try:
+            val = float(red.get("expiry_option") or 0)
+            if val > 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+    form = meta.get("form")
+    if isinstance(form, dict):
+        try:
+            val = float(form.get("expiry_option") or 0)
+            if val > 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+    return 0.0
+
+
+def _business_summary(rows: list[Any]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    week_start = now - timedelta(days=7)
+    started_types = {"mini_app_form_started", "bot_form_started"}
+    payment_types = {"mini_app_payment_screen", "crypto_invoice_created"}
+    paid_types = {"payment_code_redeemed", "crypto_payment_confirmed"}
+
+    out = {
+        "today_entries": 0,
+        "today_started": 0,
+        "today_payment_screen": 0,
+        "today_paid": 0,
+        "today_pdfs": 0,
+        "today_revenue_ils": 0.0,
+        "week_revenue_ils": 0.0,
+        "conversion_rate": 0.0,
+    }
+    for row in rows:
+        ts = str(row["ts"] or "")
+        event_type = row["event_type"]
+        try:
+            meta = json.loads(row["meta_json"] or "{}")
+        except json.JSONDecodeError:
+            meta = {}
+        is_today = ts[:10] == today
+        event_dt = None
+        try:
+            event_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if event_dt.tzinfo is None:
+                event_dt = event_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        if event_type in paid_types and event_dt and event_dt >= week_start:
+            out["week_revenue_ils"] += _price_from_meta(meta)
+        if not is_today:
+            continue
+        if event_type in {"mini_app_opened", "bot_start"}:
+            out["today_entries"] += 1
+        if event_type in started_types:
+            out["today_started"] += 1
+        if event_type in payment_types:
+            out["today_payment_screen"] += 1
+        if event_type in paid_types:
+            out["today_paid"] += 1
+            out["today_revenue_ils"] += _price_from_meta(meta)
+        if event_type == "pdf_generated" and meta.get("payment_status") == "paid_final":
+            out["today_pdfs"] += 1
+        if event_type == "telegram_final_pdf_sent":
+            out["today_pdfs"] += 1
+    if out["today_started"]:
+        out["conversion_rate"] = round((out["today_paid"] / out["today_started"]) * 100, 1)
+    out["today_revenue_ils"] = round(out["today_revenue_ils"], 2)
+    out["week_revenue_ils"] = round(out["week_revenue_ils"], 2)
+    return out
 
 
 def list_user_directory(*, limit: int = 100, offset: int = 0) -> dict[str, Any]:

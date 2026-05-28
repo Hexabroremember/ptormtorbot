@@ -8,8 +8,10 @@ import {
   Copy,
   KeyRound,
   Loader2,
+  BadgePercent,
   Receipt,
   RefreshCw,
+  Send,
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
@@ -270,6 +272,17 @@ export default function AdminPanel() {
   const [limitOverrides, setLimitOverrides] = useState([]);
   const [cryptoOrders, setCryptoOrders] = useState([]);
   const [cryptoExpandRow, setCryptoExpandRow] = useState(null);
+  const [coupons, setCoupons] = useState([]);
+  const [couponForm, setCouponForm] = useState({
+    code: "",
+    discount_type: "percent",
+    value: "10",
+    max_uses: "",
+    expires_at: "",
+    telegram_user_id: "",
+    note: "",
+  });
+  const [resendingRef, setResendingRef] = useState(null);
   const [overrideForm, setOverrideForm] = useState({
     telegram_user_id: "",
     expires_at: "",
@@ -295,7 +308,7 @@ export default function AdminPanel() {
     setLoading(true);
     setError("");
     try {
-      const [summaryData, eventsData, codesData, usersData, overridesData, cryptoOrdersData] =
+      const [summaryData, eventsData, codesData, usersData, overridesData, cryptoOrdersData, couponsData] =
         await Promise.all([
         adminFetch("/api/admin/summary"),
         adminFetch("/api/admin/events?limit=120"),
@@ -303,6 +316,7 @@ export default function AdminPanel() {
         adminFetch("/api/admin/users?limit=200"),
         adminFetch("/api/admin/rate-limit-overrides"),
         adminFetch("/api/admin/crypto-orders?limit=40&offset=0&include_ipn=true"),
+        adminFetch("/api/admin/coupons"),
       ]);
       setSummary(summaryData);
       setEvents(eventsData.items || []);
@@ -311,6 +325,7 @@ export default function AdminPanel() {
       setUsersTotal(usersData.total ?? 0);
       setLimitOverrides(overridesData.items || []);
       setCryptoOrders(cryptoOrdersData.items || []);
+      setCoupons(couponsData.items || []);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -456,6 +471,76 @@ export default function AdminPanel() {
       setError(e.message || String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const createCoupon = async () => {
+    const value = Number(couponForm.value);
+    if (!Number.isFinite(value) || value <= 0) {
+      setError("נא להזין ערך הנחה תקין");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await adminFetch("/api/admin/coupons", {
+        method: "POST",
+        body: JSON.stringify({
+          code: couponForm.code.trim() || null,
+          discount_type: couponForm.discount_type,
+          value,
+          max_uses: couponForm.max_uses ? Number(couponForm.max_uses) : null,
+          expires_at: couponForm.expires_at || null,
+          telegram_user_id: couponForm.telegram_user_id ? Number(couponForm.telegram_user_id) : null,
+          note: couponForm.note.trim() || null,
+          active: true,
+        }),
+      });
+      setCouponForm({
+        code: "",
+        discount_type: "percent",
+        value: "10",
+        max_uses: "",
+        expires_at: "",
+        telegram_user_id: "",
+        note: "",
+      });
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleCoupon = async (code, active) => {
+    setBusy(true);
+    setError("");
+    try {
+      await adminFetch(`/api/admin/coupons/${encodeURIComponent(code)}/active`, {
+        method: "POST",
+        body: JSON.stringify({ active }),
+      });
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendPdf = async (ref, telegramUserId) => {
+    setResendingRef(ref);
+    setError("");
+    try {
+      await adminFetch("/api/admin/resend-pdf", {
+        method: "POST",
+        body: JSON.stringify({ ref, telegram_user_id: telegramUserId || null }),
+      });
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setResendingRef(null);
     }
   };
 
@@ -615,6 +700,129 @@ export default function AdminPanel() {
           />
         </section>
 
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          <StatCard icon={Activity} label="נכנסו היום" value={summary?.activity?.business?.today_entries ?? "-"} />
+          <StatCard icon={UserCircle} label="התחילו מילוי" value={summary?.activity?.business?.today_started ?? "-"} tone="emerald" />
+          <StatCard icon={Receipt} label="הגיעו לתשלום" value={summary?.activity?.business?.today_payment_screen ?? "-"} tone="amber" />
+          <StatCard icon={ShieldCheck} label="שילמו היום" value={summary?.activity?.business?.today_paid ?? "-"} tone="emerald" />
+          <StatCard icon={Receipt} label="PDF היום" value={summary?.activity?.business?.today_pdfs ?? "-"} />
+          <StatCard icon={BarChart3} label="הכנסה היום" value={`₪${summary?.activity?.business?.today_revenue_ils ?? 0}`} tone="emerald" />
+          <StatCard icon={BarChart3} label="המרה" value={`${summary?.activity?.business?.conversion_rate ?? 0}%`} tone="slate" />
+        </section>
+
+        <section className="rounded-2xl border border-emerald-400/25 bg-white p-5 text-slate-900">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-black">
+              <BadgePercent size={20} className="text-emerald-700" />
+              קופונים והנחות
+            </h2>
+            <p className="text-xs text-slate-500">
+              אחוזים או סכום קבוע, הגבלת שימושים, תוקף, וקופון לפי משתמש טלגרם.
+            </p>
+          </div>
+          <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 md:grid-cols-6">
+            <input
+              value={couponForm.code}
+              onChange={(e) => setCouponForm((p) => ({ ...p, code: e.target.value }))}
+              placeholder="קוד (ריק = אוטומטי)"
+              dir="ltr"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-emerald-400"
+            />
+            <select
+              value={couponForm.discount_type}
+              onChange={(e) => setCouponForm((p) => ({ ...p, discount_type: e.target.value }))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400"
+            >
+              <option value="percent">אחוז</option>
+              <option value="fixed">סכום קבוע</option>
+            </select>
+            <input
+              value={couponForm.value}
+              onChange={(e) => setCouponForm((p) => ({ ...p, value: e.target.value }))}
+              type="number"
+              min="0"
+              step="1"
+              placeholder="ערך"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400"
+            />
+            <input
+              value={couponForm.max_uses}
+              onChange={(e) => setCouponForm((p) => ({ ...p, max_uses: e.target.value }))}
+              type="number"
+              min="1"
+              placeholder="מקס' שימושים"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400"
+            />
+            <input
+              value={couponForm.telegram_user_id}
+              onChange={(e) => setCouponForm((p) => ({ ...p, telegram_user_id: e.target.value }))}
+              placeholder="משתמש טלגרם (אופציונלי)"
+              dir="ltr"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-mono outline-none focus:border-emerald-400"
+            />
+            <button
+              type="button"
+              onClick={createCoupon}
+              disabled={busy}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-60"
+            >
+              צור קופון
+            </button>
+            <input
+              type="datetime-local"
+              value={couponForm.expires_at}
+              onChange={(e) => setCouponForm((p) => ({ ...p, expires_at: e.target.value }))}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 md:col-span-2"
+            />
+            <input
+              value={couponForm.note}
+              onChange={(e) => setCouponForm((p) => ({ ...p, note: e.target.value }))}
+              placeholder="הערה"
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400 md:col-span-4"
+            />
+          </div>
+          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-100">
+            <table className="min-w-[760px] w-full text-sm">
+              <thead className="bg-slate-50 text-right text-xs font-bold text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">קוד</th>
+                  <th className="px-3 py-2">הנחה</th>
+                  <th className="px-3 py-2">שימושים</th>
+                  <th className="px-3 py-2">תוקף</th>
+                  <th className="px-3 py-2">משתמש</th>
+                  <th className="px-3 py-2">מצב</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coupons.map((c) => (
+                  <tr key={c.code} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-mono text-xs ltr">{c.code}</td>
+                    <td className="px-3 py-2">
+                      {c.discount_type === "percent" ? `${c.value}%` : `₪${c.value}`}
+                    </td>
+                    <td className="px-3 py-2">{c.used_count || 0}{c.max_uses ? ` / ${c.max_uses}` : ""}</td>
+                    <td className="px-3 py-2 text-xs">{c.expires_at ? formatDate(c.expires_at) : "ללא"}</td>
+                    <td className="px-3 py-2 font-mono text-xs ltr">{c.telegram_user_id || "כללי"}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleCoupon(c.code, !Number(c.active))}
+                        disabled={busy}
+                        className={`rounded-lg px-3 py-1 text-xs font-bold ${
+                          Number(c.active) ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        {Number(c.active) ? "פעיל" : "כבוי"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!coupons.length ? <p className="mt-3 text-sm text-slate-500">אין קופונים עדיין.</p> : null}
+        </section>
+
         <section className="rounded-2xl border border-cyan-400/25 bg-white p-5 text-slate-900">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-lg font-black">
@@ -633,6 +841,7 @@ export default function AdminPanel() {
                   <th className="px-3 py-2">סטטוס</th>
                   <th className="px-3 py-2">מחיר ₪</th>
                   <th className="px-3 py-2">IPN payment_status</th>
+                  <th className="px-3 py-2">שליחה</th>
                   <th className="px-3 py-2">עודכן</th>
                   <th className="px-3 py-2">פירוט</th>
                 </tr>
@@ -649,6 +858,19 @@ export default function AdminPanel() {
                           ? String(o.ipn_summary.payment_status)
                           : "—"}
                       </td>
+                      <td className="px-3 py-2">
+                        {o.status === "paid" ? (
+                          <button
+                            type="button"
+                            onClick={() => resendPdf(`crypto:${o.order_id}`, o.telegram_user_id)}
+                            disabled={resendingRef === `crypto:${o.order_id}`}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                          >
+                            {resendingRef === `crypto:${o.order_id}` ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                            שלח PDF
+                          </button>
+                        ) : "—"}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(o.updated_at)}</td>
                       <td className="px-3 py-2">
                         <button
@@ -664,7 +886,7 @@ export default function AdminPanel() {
                     </tr>
                     {cryptoExpandRow === o.order_id ? (
                       <tr className="border-t border-slate-50 bg-slate-50/80">
-                        <td colSpan={6} className="px-3 py-3">
+                        <td colSpan={7} className="px-3 py-3">
                           <div className="mb-2 text-xs font-bold text-slate-600">ipn_summary</div>
                           <pre className="mb-3 max-h-28 overflow-auto rounded-lg bg-white p-2 text-xs text-slate-800 ltr">
                             {JSON.stringify(o.ipn_summary || {}, null, 2)}
@@ -1054,6 +1276,22 @@ export default function AdminPanel() {
                         ) : null}
                         <FormSnapshotCard title="טופס / נתונים" data={meta.form} />
                         <FormSnapshotCard title="מימוש קוד (צילום)" data={meta.redemption} />
+                        {event.event_type === "payment_code_redeemed" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              resendPdf(
+                                `redeem:${event.id}`,
+                                event.telegram_user_id || meta.redemption?.telegram_user_id,
+                              )
+                            }
+                            disabled={resendingRef === `redeem:${event.id}`}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                          >
+                            {resendingRef === `redeem:${event.id}` ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                            שלח PDF מחדש למשתמש
+                          </button>
+                        ) : null}
                         {event.event_type === "pdf_generated" ? (
                           <p className="text-xs text-slate-600">
                             <span className="font-bold text-slate-800">סוג הפקה:</span>{" "}

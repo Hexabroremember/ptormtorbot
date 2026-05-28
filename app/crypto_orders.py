@@ -45,6 +45,9 @@ def init_orders_table() -> None:
                     username TEXT,
                     first_name TEXT,
                     price_ils DOUBLE PRECISION NOT NULL,
+                    original_price_ils DOUBLE PRECISION,
+                    discount_ils DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    coupon_code TEXT,
                     expiry_option TEXT,
                     invoice_url TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
@@ -67,6 +70,9 @@ def init_orders_table() -> None:
                     username TEXT,
                     first_name TEXT,
                     price_ils REAL NOT NULL,
+                    original_price_ils REAL,
+                    discount_ils REAL NOT NULL DEFAULT 0,
+                    coupon_code TEXT,
                     expiry_option TEXT,
                     invoice_url TEXT,
                     status TEXT NOT NULL DEFAULT 'pending',
@@ -86,6 +92,12 @@ def init_orders_table() -> None:
             conn.execute(
                 "ALTER TABLE crypto_orders ADD COLUMN pdf_sent_to_telegram INTEGER NOT NULL DEFAULT 0"
             )
+        if "original_price_ils" not in existing:
+            conn.execute("ALTER TABLE crypto_orders ADD COLUMN original_price_ils DOUBLE PRECISION")
+        if "discount_ils" not in existing:
+            conn.execute("ALTER TABLE crypto_orders ADD COLUMN discount_ils DOUBLE PRECISION NOT NULL DEFAULT 0")
+        if "coupon_code" not in existing:
+            conn.execute("ALTER TABLE crypto_orders ADD COLUMN coupon_code TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_crypto_orders_tg ON crypto_orders(telegram_user_id)"
         )
@@ -99,6 +111,9 @@ def create_order(
     username: str | None,
     first_name: str | None,
     price_ils: float,
+    original_price_ils: float | None = None,
+    discount_ils: float = 0.0,
+    coupon_code: str | None = None,
     expiry_option: str | None,
     invoice_url: str,
     form: dict[str, Any] | None = None,
@@ -112,14 +127,17 @@ def create_order(
                 """
                 INSERT INTO crypto_orders
                     (order_id, telegram_user_id, username, first_name,
-                     price_ils, expiry_option, invoice_url,
+                     price_ils, original_price_ils, discount_ils, coupon_code, expiry_option, invoice_url,
                      status, payment_code, form_json, pdf_sent_to_telegram, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', NULL, %s, 0, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', NULL, %s, 0, %s, %s)
                 ON CONFLICT (order_id) DO UPDATE SET
                     telegram_user_id = EXCLUDED.telegram_user_id,
                     username = EXCLUDED.username,
                     first_name = EXCLUDED.first_name,
                     price_ils = EXCLUDED.price_ils,
+                    original_price_ils = EXCLUDED.original_price_ils,
+                    discount_ils = EXCLUDED.discount_ils,
+                    coupon_code = EXCLUDED.coupon_code,
                     expiry_option = EXCLUDED.expiry_option,
                     invoice_url = EXCLUDED.invoice_url,
                     status = EXCLUDED.status,
@@ -136,6 +154,9 @@ def create_order(
                     username,
                     first_name,
                     price_ils,
+                    original_price_ils,
+                    discount_ils,
+                    coupon_code,
                     expiry_option,
                     invoice_url,
                     form_json,
@@ -148,9 +169,9 @@ def create_order(
                 """
                 INSERT OR REPLACE INTO crypto_orders
                     (order_id, telegram_user_id, username, first_name,
-                     price_ils, expiry_option, invoice_url,
+                     price_ils, original_price_ils, discount_ils, coupon_code, expiry_option, invoice_url,
                      status, payment_code, form_json, pdf_sent_to_telegram, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, 0, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, 0, ?, ?)
                 """,
                 (
                     order_id,
@@ -158,6 +179,9 @@ def create_order(
                     username,
                     first_name,
                     price_ils,
+                    original_price_ils,
+                    discount_ils,
+                    coupon_code,
                     expiry_option,
                     invoice_url,
                     form_json,
@@ -231,7 +255,7 @@ def list_paid_orders_for_user(telegram_user_id: int, *, limit: int = 50) -> list
             qp(
                 """
                 SELECT order_id, created_at, updated_at, price_ils, expiry_option,
-                       payment_code, form_json
+                       payment_code, form_json, original_price_ils, discount_ils, coupon_code
                 FROM crypto_orders
                 WHERE telegram_user_id = ?
                   AND status = 'paid'
@@ -257,6 +281,9 @@ def list_paid_orders_for_user(telegram_user_id: int, *, limit: int = 50) -> list
                 "order_id": d["order_id"],
                 "ts": d.get("updated_at") or d.get("created_at"),
                 "price_ils": d.get("price_ils"),
+                "original_price_ils": d.get("original_price_ils"),
+                "discount_ils": d.get("discount_ils"),
+                "coupon_code": d.get("coupon_code"),
                 "expiry_option": d.get("expiry_option"),
                 "payment_code": d.get("payment_code"),
                 "form": form,

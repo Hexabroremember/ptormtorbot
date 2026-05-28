@@ -7,9 +7,14 @@ export function telegramInitData() {
   return window.Telegram?.WebApp?.initData || "";
 }
 
-/** True when Telegram's WebApp script bridged (initData may still be empty briefly). */
+/** True when Telegram's WebApp script is actually bridged by a Telegram client. */
 export function isTelegramWebAppShell() {
-  return Boolean(window.Telegram?.WebApp);
+  const tg = window.Telegram?.WebApp;
+  if (!tg) return false;
+  if (typeof tg.initData === "string" && tg.initData.trim()) return true;
+  if (tg.initDataUnsafe?.user?.id) return true;
+  const platform = String(tg.platform || "").trim().toLowerCase();
+  return Boolean(platform && platform !== "unknown");
 }
 
 /** Best-effort: expand viewport and signal readiness — helps some clients (notably iOS) populate initData sooner. */

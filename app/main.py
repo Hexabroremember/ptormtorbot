@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
 
 from app.activity_store import (
+    get_event,
     get_payment_redeem_event_for_user,
     list_events,
     list_payment_redeems_for_user,
@@ -47,6 +48,15 @@ from app.crypto_orders import (
     mark_paid,
     mark_pdf_sent,
 )
+from app.coupons_store import (
+    create_coupon,
+    list_coupons,
+    normalize_coupon_code,
+    record_coupon_use,
+    set_coupon_active,
+    summary as coupons_summary,
+    validate_coupon,
+)
 from app.nowpayments import create_invoice as nowpayments_create_invoice, verify_ipn_signature
 from app.payment_codes_store import (
     issue_new_code,
@@ -55,6 +65,7 @@ from app.payment_codes_store import (
     redeem_code,
 )
 from app.payment_code_meta import TIER_LABELS as EXPIRY_TIER_LABELS
+from app.payment_code_meta import VALID_TIER_KEYS
 from app.pdf_download_cache import get_pdf_record, register_pdf_bytes
 from app.public_url import effective_public_base_url
 from app.request_logging import StructuredLoggingMiddleware
@@ -170,6 +181,7 @@ class AdminIssueCodesRequest(BaseModel):
 class CreateCryptoInvoiceRequest(BaseModel):
     price_ils: float = Field(..., gt=0, le=50_000)
     expiry_option: str | None = Field(default=None, max_length=32)
+    coupon_code: str | None = Field(default=None, max_length=64)
     # Ignored for authorization: identity comes only from verified initData or tg_user_sess.
     telegram_user_id: int | None = None
     username: str | None = Field(default=None, max_length=64)
@@ -191,12 +203,53 @@ class SavedFormSnapshot(BaseModel):
 class SavedFormRequest(BaseModel):
     id: str | None = Field(default=None, max_length=80)
     form: SavedFormSnapshot
+    autosave: bool = False
     telegram_init_data: str | None = Field(default=None, max_length=16000)
     telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
 class PurchaseHistoryPdfRequest(BaseModel):
     ref: str = Field(..., min_length=6, max_length=160)
+
+
+class PurchaseHistoryResendRequest(BaseModel):
+    ref: str = Field(..., min_length=6, max_length=160)
+
+
+class ClientEventRequest(BaseModel):
+    event_type: str = Field(..., min_length=3, max_length=80)
+    current_step: int | None = Field(default=None, ge=1, le=10)
+    form: SavedFormSnapshot | None = None
+    extra: dict[str, Any] | None = None
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
+
+
+class CouponValidateRequest(BaseModel):
+    code: str = Field(..., min_length=2, max_length=64)
+    price_ils: float = Field(..., gt=0, le=50_000)
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
+
+
+class AdminCreateCouponRequest(BaseModel):
+    code: str | None = Field(default=None, max_length=64)
+    discount_type: str = Field(..., max_length=16)
+    value: float = Field(..., gt=0, le=50_000)
+    max_uses: int | None = Field(default=None, ge=1, le=100_000)
+    expires_at: str | None = Field(default=None, max_length=48)
+    telegram_user_id: int | None = None
+    active: bool = True
+    note: str | None = Field(default=None, max_length=240)
+
+
+class CouponActiveRequest(BaseModel):
+    active: bool
+
+
+class AdminResendPdfRequest(BaseModel):
+    ref: str = Field(..., min_length=6, max_length=160)
+    telegram_user_id: int | None = None
 
 
 class MiniAppSessionRequest(BaseModel):
@@ -373,6 +426,61 @@ def _request_meta(request: Request, *, watermark: bool | None = None) -> dict[st
     }
 
 
+def _base_price_for_expiry(expiry_option: str | None, fallback: float) -> float:
+    key = str(expiry_option or "").strip()
+    if key in VALID_TIER_KEYS:
+        return float(key)
+    return float(fallback)
+
+
+def _coupon_quote(
+    coupon_code: str | None,
+    *,
+    original_price_ils: float,
+    telegram_user_id: int | None,
+) -> dict[str, Any]:
+    code = normalize_coupon_code(coupon_code or "")
+    if not code:
+        return {
+            "coupon_code": None,
+            "discount_ils": 0.0,
+            "final_price_ils": round(float(original_price_ils), 2),
+        }
+    quote = validate_coupon(
+        code,
+        original_price_ils=original_price_ils,
+        telegram_user_id=telegram_user_id,
+    )
+    if not quote.get("ok"):
+        raise HTTPException(status_code=400, detail=quote.get("reason") or "invalid_coupon")
+    return {
+        "coupon_code": code,
+        "discount_ils": float(quote["discount_ils"]),
+        "final_price_ils": float(quote["final_price_ils"]),
+        "coupon": quote.get("coupon"),
+    }
+
+
+_CLIENT_EVENT_TYPES = {
+    "mini_app_opened",
+    "mini_app_form_started",
+    "mini_app_payment_screen",
+    "mini_app_abandoned",
+}
+
+
+def _client_form_meta(form: SavedFormSnapshot | None) -> dict[str, Any] | None:
+    if form is None:
+        return None
+    raw = form.model_dump()
+    return {
+        "has_full_name": bool((raw.get("fullName") or "").strip()),
+        "has_full_name_en": bool((raw.get("fullNameEn") or "").strip()),
+        "has_id_number": bool((raw.get("idNumber") or "").strip()),
+        "expiry_option": (raw.get("expiryOption") or "").strip() or None,
+    }
+
+
 # Register before /static mount so /static/index.html is HTML, not a mis-typed static file.
 @app.get("/")
 def index() -> HTMLResponse:
@@ -447,7 +555,7 @@ def save_my_form(
         telegram_user_id=ident["telegram_user_id"],
         username=ident["username"],
         first_name=ident["first_name"],
-        meta={"saved_form_id": row["id"], "title": row.get("title")},
+        meta={"saved_form_id": row["id"], "title": row.get("title"), "autosave": payload.autosave},
     )
     return row
 
@@ -514,6 +622,78 @@ def mini_app_session(
         raise HTTPException(status_code=503, detail="session_mint_unavailable")
     logger.info("[telegram:session] mini_app_session minted telegram_user_id=%s", tg_user.id)
     return {"tg_user_sess": token}
+
+
+@app.post("/api/client-event")
+def client_event(
+    payload: ClientEventRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict[str, bool]:
+    event_type = payload.event_type.strip()
+    if event_type not in _CLIENT_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail="invalid_event_type")
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
+        authorization=authorization,
+    )
+    ident = _telegram_log_identity(tg_user)
+    meta: dict[str, Any] = {
+        **_request_meta(request),
+        "current_step": payload.current_step,
+    }
+    form_meta = _client_form_meta(payload.form)
+    if form_meta:
+        meta["form"] = form_meta
+    if isinstance(payload.extra, dict):
+        for k, v in payload.extra.items():
+            if isinstance(k, str) and len(k) <= 40 and isinstance(v, (str, int, float, bool, type(None))):
+                meta[k] = v
+    log_event(
+        event_type,
+        source="mini_app",
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
+        meta=meta,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/coupons/validate")
+def validate_coupon_api(
+    payload: CouponValidateRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict[str, Any]:
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
+        authorization=authorization,
+    )
+    quote = validate_coupon(
+        payload.code,
+        original_price_ils=payload.price_ils,
+        telegram_user_id=tg_user.id if tg_user else None,
+    )
+    return {
+        "ok": bool(quote.get("ok")),
+        "reason": quote.get("reason"),
+        "code": normalize_coupon_code(payload.code),
+        "discount_ils": quote.get("discount_ils", 0.0),
+        "final_price_ils": quote.get("final_price_ils", payload.price_ils),
+    }
 
 
 @app.get("/api/my-purchase-history")
@@ -614,6 +794,39 @@ def purchase_history_final_pdf(
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
+@app.post("/api/my-purchase-history/resend-pdf")
+def purchase_history_resend_pdf(
+    payload: PurchaseHistoryResendRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+    tg_user_sess: str | None = Query(default=None),
+) -> dict[str, bool]:
+    if maintenance_mode_enabled():
+        raise HTTPException(status_code=503, detail="maintenance_mode")
+    tg_user = _require_mini_app_user(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        tg_user_sess=tg_user_sess,
+        authorization=authorization,
+    )
+    check_rate_limit("resend_pdf", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
+    sent = _resend_purchase_pdf(
+        ref=payload.ref.strip(),
+        chat_id=tg_user.id,
+        telegram_user_id=tg_user.id,
+        username=ident["username"],
+        first_name=ident["first_name"],
+        admin=False,
+    )
+    if not sent:
+        raise HTTPException(status_code=500, detail="telegram_send_failed")
+    return {"ok": True}
+
+
 @app.get("/api/admin/debug")
 def admin_debug(
     request: Request,
@@ -643,6 +856,7 @@ def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
     return {
         "activity": activity_summary(),
         "payment_codes": codes_summary(),
+        "coupons": coupons_summary(),
         "control": get_control_state(),
     }
 
@@ -687,6 +901,77 @@ def admin_payment_codes(_: AdminIdentity = Depends(require_admin)) -> dict:
     from app.payment_codes_store import list_codes
 
     return {"items": list_codes(include_code=True)}
+
+
+@app.get("/api/admin/coupons")
+def admin_coupons(_: AdminIdentity = Depends(require_admin)) -> dict:
+    return list_coupons()
+
+
+@app.post("/api/admin/coupons")
+def admin_create_coupon(
+    payload: AdminCreateCouponRequest,
+    identity: AdminIdentity = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        row = create_coupon(
+            code=payload.code,
+            discount_type=payload.discount_type,
+            value=payload.value,
+            max_uses=payload.max_uses,
+            expires_at=payload.expires_at,
+            telegram_user_id=payload.telegram_user_id,
+            active=payload.active,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_event(
+        "coupon_created",
+        source="admin_panel",
+        telegram_user_id=identity.telegram_user.id if identity.telegram_user else None,
+        meta={
+            "code": row.get("code"),
+            "discount_type": row.get("discount_type"),
+            "value": row.get("value"),
+            "max_uses": row.get("max_uses"),
+            "telegram_user_id": row.get("telegram_user_id"),
+        },
+    )
+    return row
+
+
+@app.post("/api/admin/coupons/{code}/active")
+def admin_set_coupon_active(
+    code: str,
+    payload: CouponActiveRequest,
+    _: AdminIdentity = Depends(require_admin),
+) -> dict[str, bool]:
+    out = set_coupon_active(code, payload.active)
+    log_event(
+        "coupon_active_changed",
+        source="admin_panel",
+        meta={"code": normalize_coupon_code(code), "active": payload.active},
+    )
+    return out
+
+
+@app.post("/api/admin/resend-pdf")
+def admin_resend_pdf(
+    payload: AdminResendPdfRequest,
+    _: AdminIdentity = Depends(require_admin),
+) -> dict[str, bool]:
+    sent = _resend_purchase_pdf(
+        ref=payload.ref.strip(),
+        chat_id=payload.telegram_user_id,
+        telegram_user_id=payload.telegram_user_id,
+        username=None,
+        first_name=None,
+        admin=True,
+    )
+    if not sent:
+        raise HTTPException(status_code=500, detail="telegram_send_failed")
+    return {"ok": True}
 
 
 @app.post("/api/admin/codes/issue")
@@ -901,6 +1186,100 @@ def _purchase_history_payload(telegram_user_id: int) -> dict[str, Any]:
         )
     items.sort(key=lambda x: str(x.get("ts") or ""), reverse=True)
     return {"items": items[:50]}
+
+
+def _purchase_snapshot_from_ref(
+    ref: str,
+    *,
+    telegram_user_id: int | None,
+    admin: bool = False,
+) -> tuple[dict[str, Any], int | None, str | None, str | None]:
+    def _int_or_none(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    if ref.startswith("redeem:"):
+        rest = ref.split(":", 1)[1]
+        try:
+            eid = int(rest)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid_ref") from None
+        if admin:
+            ev = get_event(eid)
+            if ev is None or ev.get("event_type") != "payment_code_redeemed":
+                raise HTTPException(status_code=404, detail="purchase_not_found")
+            meta = ev.get("meta") or {}
+            redemption = meta.get("redemption") if isinstance(meta.get("redemption"), dict) else {}
+            owner = ev.get("telegram_user_id") or redemption.get("telegram_user_id") or telegram_user_id
+            username = ev.get("username") or redemption.get("username")
+            first_name = ev.get("first_name") or redemption.get("first_name")
+        else:
+            if telegram_user_id is None:
+                raise HTTPException(status_code=401, detail="telegram_user_required")
+            ev = get_payment_redeem_event_for_user(eid, telegram_user_id)
+            if ev is None:
+                raise HTTPException(status_code=404, detail="purchase_not_found")
+            redemption = ev.get("redemption") or {}
+            owner = telegram_user_id
+            username = redemption.get("username")
+            first_name = redemption.get("first_name")
+        snap = _normalize_redemption_for_pdf(redemption)
+        if snap is None:
+            raise HTTPException(status_code=400, detail="incomplete_form_snapshot")
+        return snap, _int_or_none(owner), username, first_name
+
+    if ref.startswith("crypto:"):
+        oid = ref.split(":", 1)[1].strip()
+        if not oid:
+            raise HTTPException(status_code=400, detail="invalid_ref")
+        order = get_order(oid)
+        if order is None or order.get("status") != "paid":
+            raise HTTPException(status_code=404, detail="purchase_not_found")
+        if not admin and order.get("telegram_user_id") != telegram_user_id:
+            raise HTTPException(status_code=404, detail="purchase_not_found")
+        snap = _normalize_redemption_for_pdf(order.get("form") or {})
+        if snap is None:
+            raise HTTPException(status_code=400, detail="incomplete_form_snapshot")
+        owner = order.get("telegram_user_id") or telegram_user_id
+        return (
+            snap,
+            _int_or_none(owner),
+            order.get("username"),
+            order.get("first_name"),
+        )
+
+    raise HTTPException(status_code=400, detail="invalid_ref")
+
+
+def _resend_purchase_pdf(
+    *,
+    ref: str,
+    chat_id: int | None,
+    telegram_user_id: int | None,
+    username: str | None,
+    first_name: str | None,
+    admin: bool,
+) -> bool:
+    snap, owner_id, snap_username, snap_first_name = _purchase_snapshot_from_ref(
+        ref,
+        telegram_user_id=telegram_user_id,
+        admin=admin,
+    )
+    target_chat_id = chat_id or owner_id
+    pdf_bytes = _pdf_from_form_snapshot(snap)
+    if pdf_bytes is None:
+        raise HTTPException(status_code=500, detail="could_not_build_pdf")
+    return _send_final_pdf_to_telegram(
+        chat_id=target_chat_id,
+        pdf_bytes=pdf_bytes,
+        event_source="admin_panel" if admin else "mini_app",
+        telegram_user_id=owner_id or telegram_user_id,
+        username=username or snap_username,
+        first_name=first_name or snap_first_name,
+        meta={"ref": ref, "reason": "manual_resend" if admin else "user_resend"},
+    )
 
 
 def _send_final_pdf_to_telegram(
@@ -1255,7 +1634,7 @@ async def crypto_create_invoice(
     logger.debug(
         "[purchase:crypto] create_invoice start order_id=%s price_ils=%s expiry_option=%s",
         order_id,
-        payload.price_ils,
+        final_price,
         payload.expiry_option,
     )
     # Require server-verified Telegram identity so crypto_orders.telegram_user_id and IPN-issued
@@ -1278,12 +1657,19 @@ async def crypto_create_invoice(
     real_username = ident["username"] or payload.username
     real_first_name = ident["first_name"] or payload.first_name
     form_snapshot = _build_redemption_dict(tg_user, payload.form)
+    original_price = _base_price_for_expiry(payload.expiry_option, payload.price_ils)
+    coupon = _coupon_quote(
+        payload.coupon_code,
+        original_price_ils=original_price,
+        telegram_user_id=real_user_id,
+    )
+    final_price = max(1.0, float(coupon["final_price_ils"]))
 
-    description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(payload.price_ils)}"
+    description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(final_price)}"
 
     try:
         invoice = await nowpayments_create_invoice(
-            price_amount=payload.price_ils,
+            price_amount=final_price,
             price_currency="ils",
             order_id=order_id,
             order_description=description,
@@ -1314,7 +1700,10 @@ async def crypto_create_invoice(
         telegram_user_id=real_user_id,
         username=real_username,
         first_name=real_first_name,
-        price_ils=payload.price_ils,
+        price_ils=final_price,
+        original_price_ils=original_price,
+        discount_ils=float(coupon["discount_ils"]),
+        coupon_code=coupon["coupon_code"],
         expiry_option=payload.expiry_option,
         invoice_url=invoice_url,
         form=form_snapshot or None,
@@ -1333,7 +1722,10 @@ async def crypto_create_invoice(
         first_name=real_first_name,
         meta={
             "order_id": order_id,
-            "price_ils": payload.price_ils,
+            "price_ils": final_price,
+            "original_price_ils": original_price,
+            "discount_ils": coupon["discount_ils"],
+            "coupon_code": coupon["coupon_code"],
             "expiry_option": payload.expiry_option,
             "form": form_snapshot,
         },
@@ -1441,6 +1833,8 @@ async def crypto_ipn(request: Request) -> JSONResponse:
         )
     code = issue_new_code(meta=code_meta)
     updated = mark_paid(order_id=order_id, payment_code=code, ipn_payload=data)
+    if updated and order.get("coupon_code"):
+        record_coupon_use(str(order.get("coupon_code")))
 
     logger.info(
         "[purchase:crypto_ipn] payment_confirmed order_id=%s updated=%s telegram_user_id=%s request_id=%s",
@@ -1460,6 +1854,9 @@ async def crypto_ipn(request: Request) -> JSONResponse:
             "order_id": order_id,
             "payment_status": payment_status,
             "price_ils": order.get("price_ils"),
+            "original_price_ils": order.get("original_price_ils"),
+            "discount_ils": order.get("discount_ils"),
+            "coupon_code": order.get("coupon_code"),
             "already_processed": not updated,
         },
     )
@@ -1726,6 +2123,10 @@ def redeem_payment_code(
                 meta={
                     **request_meta,
                     "code_last4": code_hint,
+                    "price_ils": float(redemption_enriched.get("expiry_option") or 0)
+                    if isinstance(redemption_enriched, dict)
+                    and str(redemption_enriched.get("expiry_option") or "").isdigit()
+                    else None,
                     "redemption": redemption_enriched or {},
                     "telegram_pdf_sent": already_pdf_sent,
                     "telegram_user_resolved": bool(tg_user),
