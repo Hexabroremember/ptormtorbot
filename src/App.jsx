@@ -627,7 +627,7 @@ const App = () => {
     [formData.fullName, formData.fullNameEn, formData.idNumber, formData.expiryOption]
   );
 
-  const TELEGRAM_LINK = "https://t.me/m/h_K7ZBosMzdh";
+  const TELEGRAM_LINK = "https://t.me/mechonator";
 
   /** Full-screen step 2 animation until preview JPEG exists or the request fails. */
   const step2AwaitingPdf = currentStep === 2 && !previewImageUrl && !pdfError;
@@ -670,6 +670,11 @@ const App = () => {
   const buildCouponValidateUrl = () => {
     const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
     return base ? `${base}/api/coupons/validate` : `/api/coupons/validate`;
+  };
+
+  const buildManualPaymentRequestUrl = () => {
+    const base = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    return base ? `${base}/api/manual-payment-request` : `/api/manual-payment-request`;
   };
 
   const hasAnyFormData = useMemo(
@@ -1159,7 +1164,35 @@ const App = () => {
         setCryptoError(e.message || String(e));
       }
     } else {
-      window.open(TELEGRAM_LINK, '_blank');
+      try {
+        const initData = telegramInitData();
+        const sess = storedTelegramUserSession();
+        await fetch(appendTelegramContextQuery(buildManualPaymentRequestUrl(), initData), {
+          method: "POST",
+          headers: jsonHeaders({}, { initData, userSession: sess }),
+          keepalive: true,
+          body: JSON.stringify({
+            method,
+            price_ils: originalPrice,
+            final_price_ils: finalPrice,
+            discount_ils: discountIls,
+            coupon_code: couponQuote?.ok ? couponQuote.code : null,
+            expiry_option: formData.expiryOption,
+            form: {
+              hebrew_full_name: formData.fullName.trim(),
+              english_full_name: formData.fullNameEn.trim().toUpperCase(),
+              id_number: formData.idNumber.replace(/\D/g, ""),
+              expiration_date: computeExpirationForPdf(formData.expiryOption),
+              expiry_option: formData.expiryOption,
+            },
+            telegram_init_data: initData || "",
+            telegram_user_session: sess,
+          }),
+        });
+      } catch {
+        /* Do not block opening the Telegram payment chat. */
+      }
+      openTelegramDeepLink(TELEGRAM_LINK);
     }
   };
 

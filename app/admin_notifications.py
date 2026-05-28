@@ -59,6 +59,8 @@ def _event_title(event_type: str, meta: dict[str, Any]) -> str | None:
         return "User reached payment"
     if event_type == "mini_app_abandoned":
         return "User left before payment"
+    if event_type == "manual_payment_requested":
+        return "Manual payment requested"
     if event_type == "crypto_invoice_created":
         return "Crypto invoice created"
     if event_type == "crypto_payment_confirmed":
@@ -106,6 +108,10 @@ def send_admin_event_notification(
         lines.append(f"<b>Discount:</b> {html.escape(_money(payload.get('discount_ils')))}")
     if payload.get("coupon_code"):
         lines.append(f"<b>Coupon:</b> <code>{html.escape(str(payload.get('coupon_code')))}</code>")
+    if payload.get("method"):
+        lines.append(f"<b>Method:</b> {html.escape(str(payload.get('method')))}")
+    if payload.get("expiry_option"):
+        lines.append(f"<b>Package:</b> {html.escape(str(payload.get('expiry_option')))}")
     if payload.get("order_id"):
         lines.append(f"<b>Order:</b> <code>{html.escape(str(payload.get('order_id')))}</code>")
     if payload.get("code_last4"):
@@ -113,6 +119,20 @@ def send_admin_event_notification(
     reason = payload.get("reason")
     if reason:
         lines.append(f"<b>Reason:</b> {html.escape(str(reason))}")
+    form = payload.get("form")
+    if isinstance(form, dict):
+        form_lines: list[str] = []
+        for key, label in (
+            ("hebrew_full_name", "Hebrew name"),
+            ("english_full_name", "English name"),
+            ("id_number", "ID"),
+            ("expiration_date", "Expiration"),
+        ):
+            value = form.get(key)
+            if value:
+                form_lines.append(f"{label}: {html.escape(str(value))}")
+        if form_lines:
+            lines.append("<b>Order details:</b>\n" + "\n".join(form_lines))
 
     ok, err = send_telegram_message(chat_id, "\n".join(lines))
     if not ok:

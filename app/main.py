@@ -191,6 +191,18 @@ class CreateCryptoInvoiceRequest(BaseModel):
     telegram_user_session: str | None = Field(default=None, max_length=1000)
 
 
+class ManualPaymentRequest(BaseModel):
+    method: str = Field(..., min_length=2, max_length=32)
+    price_ils: float = Field(..., gt=0, le=50_000)
+    final_price_ils: float | None = Field(default=None, gt=0, le=50_000)
+    discount_ils: float | None = Field(default=None, ge=0, le=50_000)
+    coupon_code: str | None = Field(default=None, max_length=64)
+    expiry_option: str | None = Field(default=None, max_length=32)
+    form: RedeemFormSnapshot | None = None
+    telegram_init_data: str | None = Field(default=None, max_length=16000)
+    telegram_user_session: str | None = Field(default=None, max_length=1000)
+
+
 class SavedFormSnapshot(BaseModel):
     fullName: str | None = Field(default="", max_length=120)
     fullNameEn: str | None = Field(default="", max_length=120)
@@ -1630,13 +1642,6 @@ async def crypto_create_invoice(
         logger.warning("[purchase:crypto] create_invoice blocked detail=WEB_APP_URL_not_configured")
         raise HTTPException(status_code=503, detail="WEB_APP_URL not configured")
 
-    order_id = str(uuid.uuid4())
-    logger.debug(
-        "[purchase:crypto] create_invoice start order_id=%s price_ils=%s expiry_option=%s",
-        order_id,
-        final_price,
-        payload.expiry_option,
-    )
     # Require server-verified Telegram identity so crypto_orders.telegram_user_id and IPN-issued
     # codes always carry purchaser_telegram_user_id for redeem-time DMs. Unauthenticated
     # payload.telegram_user_id alone is not accepted (spoofable). DM cannot fire without a
@@ -1664,6 +1669,13 @@ async def crypto_create_invoice(
         telegram_user_id=real_user_id,
     )
     final_price = max(1.0, float(coupon["final_price_ils"]))
+    order_id = str(uuid.uuid4())
+    logger.debug(
+        "[purchase:crypto] create_invoice start order_id=%s price_ils=%s expiry_option=%s",
+        order_id,
+        final_price,
+        payload.expiry_option,
+    )
 
     description = f"פטור מתור · {payload.expiry_option or ''} · ₪{int(final_price)}"
 
@@ -1731,6 +1743,49 @@ async def crypto_create_invoice(
         },
     )
     return {"order_id": order_id, "invoice_url": invoice_url}
+
+
+@app.post("/api/manual-payment-request")
+def manual_payment_request(
+    payload: ManualPaymentRequest,
+    request: Request,
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    authorization: str | None = Header(default=None),
+    tg_init_data: str | None = Query(default=None),
+) -> dict[str, bool]:
+    """Log a payment-button click and notify the owner before routing the user to Telegram."""
+    tg_user = _telegram_user_from_webapp_request(
+        request,
+        x_telegram_init_data=x_telegram_init_data,
+        tg_init_data_query=tg_init_data,
+        body_init_data=payload.telegram_init_data,
+        tg_user_sess=payload.telegram_user_session,
+        authorization=authorization,
+    )
+    check_rate_limit("manual_payment_request", request, tg_user)
+    ident = _telegram_log_identity(tg_user)
+    form_snapshot = _build_redemption_dict(tg_user, payload.form)
+    original_price = _base_price_for_expiry(payload.expiry_option, payload.price_ils)
+    final_price = float(payload.final_price_ils or original_price)
+    method = re.sub(r"[^a-zA-Z0-9_-]", "", payload.method.strip().lower()) or "unknown"
+    log_event(
+        "manual_payment_requested",
+        source="mini_app",
+        telegram_user_id=ident["telegram_user_id"],
+        username=ident["username"],
+        first_name=ident["first_name"],
+        meta={
+            **_request_meta(request),
+            "method": method,
+            "price_ils": original_price,
+            "final_price_ils": final_price,
+            "discount_ils": float(payload.discount_ils or 0),
+            "coupon_code": normalize_coupon_code(payload.coupon_code or "") or None,
+            "expiry_option": payload.expiry_option,
+            "form": form_snapshot,
+        },
+    )
+    return {"ok": True}
 
 
 @app.get("/api/crypto/order-status")
