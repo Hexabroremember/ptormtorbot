@@ -1006,14 +1006,6 @@ const App = () => {
     !isTelegramWebAppShell() &&
     !hasTelegramAuthContext();
 
-  const statusItems = [
-    { label: t.statusReceived, done: currentStep > 1 || Boolean(previewImageUrl), active: currentStep === 1 },
-    { label: t.statusWaitingPayment, done: paymentApproved, active: currentStep === 3 && !paymentApproved },
-    { label: t.statusPaymentApproved, done: paymentApproved, active: paymentApproved },
-    { label: t.statusPreparing, done: Boolean(previewImageUrl), active: step2AwaitingPdf || finalPdfDownloading },
-    { label: t.statusSent, done: paymentApproved && !finalPdfDownloading, active: false },
-  ];
-
   const dismissOutsideTelegramBanner = () => {
     try {
       sessionStorage.setItem("ptorOutsideTgBannerDismissed", "1");
@@ -2080,31 +2072,6 @@ const App = () => {
                 </div>
               );
             })}
-          </div>
-        </div>
-
-        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            {statusItems.map((item) => (
-              <span
-                key={item.label}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${
-                  item.done
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : item.active
-                      ? "border-blue-200 bg-blue-50 text-blue-800"
-                      : "border-slate-200 bg-slate-50 text-slate-500"
-                }`}
-              >
-                {item.done ? <CheckCircle2 size={14} /> : item.active ? <Loader2 size={14} className="animate-spin" /> : null}
-                {item.label}
-              </span>
-            ))}
-            {autosaveState === "saved" || autosaveState === "local" ? (
-              <span className="ms-auto rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
-                {t.autosaveReady}
-              </span>
-            ) : null}
           </div>
         </div>
 
