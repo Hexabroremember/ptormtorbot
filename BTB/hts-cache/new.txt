@@ -1,0 +1,6 @@
+date	size'/'remotesize	flags(request:Update,Range state:File response:Modified,Chunked,gZipped)	statuscode	status ('servermsg')	MIME	Etag|Date	URL	localfile	(from URL)
+22:21:09	54314/54314	---M-Z	200	added ('OK')	text/html	date:Mon,%2004%20May%202026%2019:21:39%20GMT	https://b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm.aspx?E=2B00AF6B6F3D7B3EC493EB26BB8710BE	C:/My%20Web%20Sites/BTB/b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm57f6.html	(from )
+22:21:10	81826/81826	---M-Z	200	added ('OK')	text/html	date:Mon,%2004%20May%202026%2019:21:39%20GMT	https://b2b.btl.gov.il/BTL.ILG.Payments/HomePage.aspx	C:/My%20Web%20Sites/BTB/b2b.btl.gov.il/BTL.ILG.Payments/HomePage.html	(from )
+22:21:10	43/43	---M--	200	added ('OK')	text/html		https://b2b.btl.gov.il/robots.txt		(from )
+22:21:11	1010/1010	---MC-	200	added ('OK')	text/javascript	date:Mon,%2004%20May%202026%2019:21:40%20GMT	https://www.google.com/recaptcha/api.js?render=6LfBGVkqAAAAAPjGQs3MckRUzop3prHXEsqE_CzV	C:/My%20Web%20Sites/BTB/www.google.com/recaptcha/api54b3.js	(from https://b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm.aspx?E=2B00AF6B6F3D7B3EC493EB26BB8710BE)
+22:21:11	4702/4702	---M--	200	added ('OK')	text/html		https://b2b.btl.gov.il/Bullet.png	C:/My%20Web%20Sites/BTB/b2b.btl.gov.il/Bullet.html	(from https://b2b.btl.gov.il/BTL.ILG.Payments/HomePage.aspx)

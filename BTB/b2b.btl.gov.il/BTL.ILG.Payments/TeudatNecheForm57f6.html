@@ -1,0 +1,1144 @@
+
+<!DOCTYPE html>
+<html lang="he" xmlns="http://www.w3.org/1999/xhtml">
+
+<!-- Mirrored from b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm.aspx?E=2B00AF6B6F3D7B3EC493EB26BB8710BE by HTTrack Website Copier/3.x [XR&CO'2014], Mon, 04 May 2026 19:21:10 GMT -->
+<!-- Added by HTTrack --><meta http-equiv="content-type" content="text/html;charset=utf-8" /><!-- /Added by HTTrack -->
+<head id="Head1"><title>
+	המוסד לביטוח לאומי,הפקת תעודת נכה דיגיטלית,הצגת תעודה
+</title><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1" /><meta http-equiv="X-UA-Compatible" content="IE=100" /><link rel="shortcut icon" type="image/ico" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/system_icon_16.ico" /><link rel="icon" type="image/ico" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/system_icon_16.ico" /><link id="cssFont" rel="Stylesheet" type="text/css" title="cssFont" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/SmallFont.css" /><link rel="stylesheet" type="text/css" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/MainStyleSheet.css?ver=1.3" /><link rel="stylesheet" type="text/css" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/MasterStyleSheet.css?ver=1.0" /><link rel="stylesheet" type="text/css" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/MobileStyleSheet.css?ver=1.0" /><link rel="stylesheet" type="text/css" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/SvivaStyleSheet.css?ver=1.0" />
+    
+    
+    <script src="https://b2b.btl.gov.il/BTL.ILG.Payments/Scripts/jquery-3.7.1.min.js" type="text/javascript"></script>
+    <script src="https://b2b.btl.gov.il/BTL.ILG.Payments/Scripts/captcha.js" type="text/javascript"></script>
+    
+    <style>
+        .grecaptcha-badge {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        .masterBody {
+            background-color: #e9e9e9;
+            padding: 0px;
+            margin: 0px;
+        }
+
+        .masterBanner {
+            vertical-align: top;
+            background-repeat: repeat-x;
+            width: 100%;
+            height: 70px;
+            margin: 0px;
+            padding: 0px;
+            top: 0px;
+            right: 0px;
+        }
+
+        .masterBackground {
+            vertical-align: top;
+            background-image: url(https://b2b.btl.gov.il/BTL.ILG.Payments/Images/Background.png);
+            background-repeat: repeat-x;
+            width: 100%;
+            height: 117px;
+            margin: 0px;
+            padding: 0px;
+            right: 0px;
+            top: 70px;
+            position: absolute;
+            z-index: -1;
+        }
+
+        .MasterContentPlaceholder {
+            width: 975px;
+            margin: 0px auto;
+            padding-top: 10px;
+            min-height: 507px;
+        }
+
+        .mainDiv {
+            background-color: White;
+            display: table;
+            width: 975px;
+        }
+
+        .FormDetailsTitle {
+            padding-top: 10px;
+            padding-bottom: 2px;
+            vertical-align: bottom;
+            display: table;
+            width: 100%;
+        }
+
+        .MasterFooter {
+            width: 975px;
+            margin: 0px auto;
+            padding-top: 10px;
+            background-color: #d8d8d8;
+            min-height: 75px;
+            clear: both;
+            text-align: center;
+        }
+
+        .FormID {
+            /*text-align: left;
+            float: left;
+            display: inline;*/
+            display: table-cell;
+            text-align: left;
+            padding-top: 15px;
+        }
+
+        .SubTitle {
+            display: inline;
+        }
+
+        .Stages {
+            display: table;
+            z-index: 2;
+            position: relative;
+        }
+
+        .StagesList {
+            display: table-row;
+            margin: 0px;
+            padding: 0px;
+        }
+    </style>
+    <!-- Google tag (gtag.js) -->
+    <script async="async" src="https://www.googletagmanager.com/gtag/js?id=G-MZ4QC1CMWL"></script>
+    <script> window.dataLayer = window.dataLayer || []; function gtag() { dataLayer.push(arguments); } gtag('js', new Date()); gtag('config', 'G-MZ4QC1CMWL'); </script>
+
+    <script type="text/javascript">
+
+        //(function (i, s, o, g, r, a, m) {
+        //    i['GoogleAnalyticsObject'] = r; i[r] = i[r] || function () {
+        //        (i[r].q = i[r].q || []).push(arguments)
+        //    }, i[r].l = 1 * new Date(); a = s.createElement(o),
+        //m = s.getElementsByTagName(o)[0]; a.async = 1; a.src = g; m.parentNode.insertBefore(a, m)
+        //})(window, document, 'script', 'https://www.google-analytics.com/analytics.js', 'ga');
+
+        //ga('create', 'UA-81490726-1', 'auto');
+        //ga('send', 'pageview');
+
+
+        var HyperLinkBTLControl;
+
+        $(document).ready(function () {
+
+            // if AutoComplete for city is needed:
+            // The following code should be copied once,
+            // it contains path for request and the actual request to server for City List
+            HyperLinkBTLControl = document.getElementById("HyperLinkBTL");
+        })
+
+        function masterPage_onload() {
+            //batsheva - temp!! only to test screen flickering
+            //if (top.frames.length > 0) {
+            //    top.location.href = self.location;
+            //}
+
+            getStyleSheet()
+
+            // call onload function that is written in pages that use master page
+            if (window.body_onload != null)
+                window.body_onload();
+        }
+
+
+        function goToPageFromClient(pageUrl) {
+            if (pageUrl.length != 0) {
+                location.href = pageUrl;
+            }
+            return;
+        }
+
+        function getStyleSheet() {
+
+            var fontSize;
+
+            if (localStorage.fontSize != null) {
+                fontSize = localStorage.fontSize;
+            }
+            else {
+                fontSize = "SmallFont";
+            }
+
+            switchFontSize(fontSize);
+
+
+        }
+
+        //taken from MSDN
+        function getInternetExplorerVersion()
+        // Returns the version of Internet Explorer or a -1
+        // (indicating the use of another browser).
+        {
+            var rv = -1; // Return value assumes failure.
+            if (navigator.appName == 'Microsoft Internet Explorer') {
+                var ua = navigator.userAgent;
+                var re = new RegExp("MSIE ([0-9]{1,}[\.0-9]{0,})");
+                if (re.exec(ua) != null)
+                    rv = parseFloat(RegExp.$1);
+            }
+            return rv;
+        }
+
+
+
+
+        function switchFontSize(fontSize) {
+
+
+            localStorage.fontSize = fontSize;
+
+            var hrefTag = document.getElementById("cssFont");
+
+            switch (localStorage.fontSize) {
+                case "SmallFont":
+                    hrefTag.href = "https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/SmallFont.css";
+                    break;
+
+                case "MediumFont":
+                    hrefTag.href = "https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/MediumFont.css";
+                    break;
+
+                case "LargeFont":
+                    hrefTag.href = "https://b2b.btl.gov.il/BTL.ILG.Payments/Styles/LargeFont.css";
+                    break;
+
+                default:
+                    break;
+            }
+
+            // partially fix IE9 bug, if font size changed, select boxes not updated automaticaly
+            // fix only works when button is pressed twice!
+            var ver = getInternetExplorerVersion();
+
+            if (ver > -1) {
+                if (ver == 9.0) {
+                    var selectBoxs = document.getElementsByTagName("select");
+                    var selectBox;
+                    for (var i = 0; i < selectBoxs.length; i++) {
+                        selectBox = selectBoxs[i];
+                        selectBox.style.height = selectBox.style.height;
+
+                    }
+
+                }
+            }
+
+
+
+        }
+
+        function openOdot() {
+            alert("abc");
+
+        }
+
+        // Client Popup User Control Code
+        var mousex = 0;
+        var mousey = 0;
+        var grabx = 0;
+        var graby = 0;
+        var orix = 0;
+        var oriy = 0;
+        var elex = 0;
+        var eley = 0;
+        var algor = 0;
+        var maxZIndex = 900;
+
+        var dragobj = null;
+
+        function falsefunc() { return false; } // used to block cascading events
+
+        function init() {
+            document.onmousemove = update; // update(event) implied on NS, update(null) implied on IE
+            grabx = mousex;
+            graby = mousey;
+            update();
+        }
+
+        function getMouseXY(e) // works on IE6,FF,Moz,Opera7
+        {
+            if (!e) e = window.event; // works on IE, but not NS (we rely on NS passing us the event)
+
+            if (e) {
+                if (e.pageX || e.pageY) { // this doesn't work on IE6!! (works on FF,Moz,Opera7)
+                    mousex = e.pageX;
+                    mousey = e.pageY;
+                    algor = '[e.pageX]';
+                    if (e.clientX || e.clientY) algor += ' [e.clientX] '
+                }
+                else if (e.clientX || e.clientY) { // works on IE6,FF,Moz,Opera7
+                    mousex = e.clientX + document.body.scrollLeft;
+                    mousey = e.clientY + document.body.scrollTop;
+                    algor = '[e.clientX]';
+                    if (e.pageX || e.pageY) algor += ' [e.pageX] '
+                }
+            }
+        }
+
+        function update(e) {
+            getMouseXY(e); // NS is passing (event), while IE is passing (null)
+
+
+        }
+
+        function grab(context) {
+            document.onmousedown = falsefunc; // in NS this prevents cascading of events, thus disabling text selection
+            dragobj = context;
+            dragobj.style.zIndex = maxZIndex + 1;  // move it to the top
+            maxZIndex++;
+            document.onmousemove = drag;
+            document.onmouseup = drop;
+            grabx = mousex;
+            graby = mousey;
+            elex = orix = dragobj.offsetLeft;
+            eley = oriy = dragobj.offsetTop;
+            update();
+        }
+
+        function drag(e) // parameter passing is important for NS family 
+        {
+            var prevElex;
+            var windowWidth;
+            if (dragobj) {
+                //alert("elex:" + elex + " mousex:" + mousex + " grabx:" + grabx + "eley:" + eley + " mousey:" + mousey + " graby:" + graby);
+                if (grabx == 0) {
+                    grabx = mousex;
+                    graby = mousey;
+                }
+                prevElex = elex;
+                elex = orix + (mousex - grabx);
+                eley = oriy + (mousey - graby);
+                dragobj.style.position = "absolute";
+                if (eley < 0) {
+                    eley = 0;
+                    //alert($(window).width());
+                    //alert(clientWidth);
+
+                }
+                if (elex < 0) {
+                    elex = 0;
+                }
+                windowWidth = $(window).width();
+                if ((elex + dragobj.clientWidth) > windowWidth) {
+                    elex = windowWidth - dragobj.clientWidth - 12;
+                }
+                dragobj.style.left = (elex).toString(10) + 'px';
+                dragobj.style.top = (eley).toString(10) + 'px';
+            }
+            update(e);
+            return false; // in IE this prevents cascading of events, thus text selection is disabled
+        }
+
+        function drop() {
+            if (dragobj) {
+                //dragobj.style.zIndex = 0;
+                dragobj = null;
+            }
+            update();
+            document.onmousemove = update;
+            document.onmouseup = null;
+            document.onmousedown = null;   // re-enables text selection on NS
+        }
+
+        function closeDiv(e) {
+            e.parentElement.style.display = "none";
+        }
+
+        function body_onload() {
+
+            /* this function is called from master page - if defined */
+            init();
+        }
+        function showDiv(e) {
+            e.style.display = "";
+
+        }
+        // End of Client Popup User Control Code
+
+        function lnkOdotClick() {
+            //debugger;
+            var mybtnOdot = document.getElementById("btnOdot");
+            mybtnOdot.click();
+            //alert("lnkodot");
+        }
+
+        function lnkShimushClick() {
+            //debugger;
+            //var btnTnaeyShimush = document.getElementById("btnTnaeyShimush");
+            var btnTnaeyShimush = document.getElementById("HyperLinkTnaeyShimush");
+            btnTnaeyShimush.click();
+            //alert("lnkodot");
+        }
+        function lnkPnuElenuClick() {
+            var btnPnuElenu = document.getElementById("btnPnuElenu");
+            btnPnuElenu.click();
+
+        }
+
+        function divMasterBanner_onclick() {
+            HyperLinkBTLControl.click();
+        }
+
+        function setControlFocus(ControlClientId) {
+            $("#" + ControlClientId).focus();
+        }
+    </script>
+    
+    <script type="text/javascript">
+     
+</script>
+
+  
+
+    <style>
+        .teudat-nechut {
+            max-width: 300px;
+        }
+            .grecaptcha-badge {
+            display: none !important;
+            visibility: hidden !important;
+        }
+            .teudat-nechut h3:before {
+                content: " ";
+                position: absolute;
+                width: 38px;
+                height: 98px;
+                top: calc(50% - 21px);
+                right: 0px;
+                /*background: url('http://ymp12kiis/BTL.ILG.Payments/Icons/ico-thumbup.png') no-repeat;*/
+                background: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/ico-thumbup.png') no-repeat;
+            }
+
+            .teudat-nechut h3 {
+                position: relative;
+                padding-right: 43px;
+                color: inherit;
+                font-weight: normal;
+                font-size: 20px
+            }
+
+
+            .teudat-nechut .blueButton,
+            .teudat-nechut .grayButton {
+                position: relative;
+                margin: 16px 0
+            }
+
+            .teudat-nechut input {
+                text-align: right;
+                padding-right: 41px;
+            }
+
+            .teudat-nechut .blueButton:before,
+            .teudat-nechut .grayButton:before {
+                content: " ";
+                position: absolute;
+                width: 26px;
+                height: 26px;
+                top: calc(50% - 14px);
+                right: 6px;
+            }
+
+            .teudat-nechut .blueButton:before {
+                background: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/ico-download.png') no-repeat;
+            }
+
+            .teudat-nechut .grayButton:before {
+                background: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/ico-print.png') no-repeat;
+            }
+    </style>
+    <script type="text/javascript">
+        function OpenPrintWindow(txtPaymentIDClientID) {
+            var WindowObject;
+            var PaymentID = $("#" + txtPaymentIDClientID).val();
+
+            WindowObject = window.open('FormPDFPreview.aspx?paymentid=' + PaymentID, '', 'width=800,height=800,top=50,left=50,directories=0,titlebar=0,toolbar=0,scrollbars=1,status=0,location=0,menubar=0,resizable=yes');
+            WindowObject.focus();
+        }
+    </script>
+</head>
+<body class="masterBody" onload="masterPage_onload()" onunload="" dir="rtl">
+    
+<style type="text/css">
+    .KeyboardButton
+    {
+        display: inline-block;
+        vertical-align: bottom;
+        overflow: hidden;
+        border-radius: 1px;
+        border: solid 1px #b4b4b4;
+        min-height: 23px;
+        min-width: 23px;
+        margin: 0px;
+        padding: 0px;
+        float: right;
+        margin-right: 1px;
+        margin-left: 1px;
+        margin-top: 2px;
+        margin-bottom: 2px;
+        padding-top: 0px;
+        padding-bottom: 0px;
+        background-color: #cacaca;
+        background: -webkit-gradient(linear, left top, left bottom, from(#f3f3f3), to(#cacaca));
+        background: -moz-linear-gradient(top,  #f3f3f3,  #cacaca);
+        background: -o-linear-gradient(top, #f3f3f3, #cacaca);
+        filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#f3f3f3', endColorstr='#cacaca');
+    }
+    .KeyboardButton hover
+    {
+        border: 1px solid #636363;
+        background-color: #cacaca;
+        background: -webkit-gradient(linear, left top, left bottom, from(#f3f3f3), to(#cacaca));
+        background: -moz-linear-gradient(top,  #f3f3f3,  #cacaca);
+        background: -o-linear-gradient(top, #f3f3f3, #cacaca);
+        filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#f3f3f3', endColorstr='#cacaca');
+        color: #131313;
+        cursor: pointer;
+    }
+    .KeyboardButton input
+    {
+        margin-top: 0px;
+        margin-bottom: 0px;
+        width: 100%;
+        border: 1px solid transparent;
+        background-color: transparent;
+        color: #373737;
+        padding-left: 0px;
+        padding-right: 0px;
+        min-height: 23px;
+    }
+    .KeyboardButton input:hover
+    {
+        border: 1px solid #636363;
+        color: #131313;
+        cursor: pointer;
+    }
+    .KeyboardButton input:active
+    {
+        border: 1px solid #636363;
+        color: #131313;
+    }
+</style>
+
+<script type="text/javascript">
+    // hover:
+    //<!--        background-color: #cacaca;
+    //        background: -webkit-gradient(linear, left top, left bottom, from(#f3f3f3), to(#cacaca));
+    //        background: -moz-linear-gradient(top,  #f3f3f3,  #cacaca);
+    //        background: -o-linear-gradient(top, #f3f3f3, #cacaca);
+    //        filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#f3f3f3', endColorstr='#cacaca');-->
+    // active:
+    //<!--        background-color: #f3f3f3;
+    //        background: -webkit-gradient(linear, left top, left bottom, from(#cacaca), to(#f3f3f3));
+    //        background: -moz-linear-gradient(top,  #cacaca,  #f3f3f3);
+    //        background: -o-linear-gradient(top, #cacaca, #f3f3f3);
+    //        filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#cacaca', endColorstr='#f3f3f3');-->
+
+    //alert("/".charCodeAt(0));
+    //    alert("\n".charCodeAt(0));
+    //    alert("\n".charCodeAt(0));
+    //    //alert("-".charCodeAt(0));
+    //    alert("0".charCodeAt(0));
+    //    alert("1".charCodeAt(0));
+
+    //    alert(String.fromCharCode("א".charCodeAt(0)));
+
+    var updateTextbox;
+
+
+    function OpenKeyboard(event, keyboardIcon, TextBoxID) {
+
+        divKeyboardVar = document.getElementById("divKeyboard");
+        keyboardIconVar = document.getElementById(keyboardIcon);
+
+        if ((divKeyboardVar.style.display == "") && (TextBoxID == updateTextbox.id)) {
+            divKeyboardVar.style.display = "none";
+            return;
+
+        }
+        divKeyboardVar.style.display = "";
+
+        updateTextbox = document.getElementById(TextBoxID);
+        
+        // this code doen't work for relative object             
+        //var position = $(keyboardIconVar).offset();
+        //divKeyboardVar.style.top = String(position.top + keyboardIconVar.clientHeight + 4) + "px";
+        //divKeyboardVar.style.left = (position.left - divKeyboardVar.clientWidth + keyboardIconVar.clientWidth - 4) + "px";
+
+        var x = event.clientX;
+        var y = event.clientY;
+        divKeyboardVar.style.top = String(y + keyboardIconVar.clientHeight + 4) + "px";
+        divKeyboardVar.style.left = (x - divKeyboardVar.clientWidth + keyboardIconVar.clientWidth - 4) + "px";
+
+        divKeyboardVar.style.zIndex = 901;
+
+
+//        if (!isScrolledIntoView(divKeyboardVar)) {
+//            document.getElementById('Button15').scrollIntoView();
+//        }
+        updateTextbox.focus();
+
+    }
+
+    function CloseKeyboard() {
+        divKeyboardVar = document.getElementById("divKeyboard");
+        divKeyboardVar.style.display = "none";
+        updateTextbox.focus();
+    }
+
+    function isScrolledIntoView(elem) {
+        var docViewTop = $(window).scrollTop();
+        var docViewBottom = docViewTop + $(window).height();
+
+        var elemTop = $(elem).offset().top;
+        var elemBottom = elemTop + $(elem).height();
+
+        return ((elemBottom >= docViewTop) && (elemTop <= docViewBottom)
+      && (elemBottom <= docViewBottom) && (elemTop >= docViewTop));
+    }
+
+    function btnClicked(clickedButton) {
+        //debugger;
+
+        if (clickedButton.value == "") {
+            
+            // backspace
+            if (clickedButton.id == "Button1") {
+                if (updateTextbox.value.length > 0) {
+                    //alert(updateTextbox.value.substr(updateTextbox.value.length - 1).charCodeAt(0));                    
+                    updateTextbox.value = updateTextbox.value.substr(0, updateTextbox.value.length - 1);
+                }
+                updateTextbox.focus();
+                return;
+            }
+            // enter
+//            if (clickedButton.id == "Button28" && clickedButton.style.display != "none") {
+//                updateTextbox.value += String.fromCharCode(10);
+//                updateTextbox.focus();
+//                divKeyboard.scrollTop += 15;
+//                return;
+//            }
+
+        }
+        //debugger;
+        //var clickedChar = String.fromCharCode(clickedCharCode);
+        if (updateTextbox.value.length < updateTextbox.maxLength) {
+            updateTextbox.value += clickedButton.value;
+        }
+        updateTextbox.focus();
+        //updateTextbox.ScrollTop = +updateTextbox.ScrollTop + 15;
+
+    }
+
+    function alertLastChars() {
+        //        alert(String.fromCharCode(updateTextbox.value.substr(updateTextbox.value.length - 2, updateTextbox.value.length - 1).charCodeAt(0)))
+        //        alert(String.fromCharCode(updateTextbox.value.substr(updateTextbox.value.length - 1, updateTextbox.value.length - 0).charCodeAt(0)))
+        debugger;
+        //alert(updateTextbox.value.substr(updateTextbox.value.length - 2, updateTextbox.value.length - 1).charCodeAt(0));
+        //alert(updateTextbox.value.substr(updateTextbox.value.length - 1, updateTextbox.value.length).charCodeAt(0));
+        alert(updateTextbox.value.lastIndexOf(String.fromCharCode(13)));
+
+        //alert(String.fromCharCode("א".charCodeAt(0)))
+    }
+</script>
+<div dir="rtl" id="divKeyboard" style="display: inline-block; background-color: #f7f7f7;
+    border: 2px solid #a9a9a9; display: none; border-radius: 2px; padding-top: 6px;
+    padding-bottom: 6px; padding-left: 6px; padding-right: 6px; width: auto; position: absolute;
+    clear: both">
+
+    <div class="KeyboardButton" style="width: 40px;">
+        <input type="button" id="Button1" value="" onclick="btnClicked(this)" style="z-index: 903;
+            background-image: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/KeyboardBackspace.png'); background-repeat: no-repeat;
+            background-position: center;" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button2" value="=" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button3" value="-" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button4" value="0" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button5" value="9" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button6" value="8" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button7" value="7" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button8" value="6" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button9" value="5" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button10" value="4" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button11" value="3" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button12" value="2" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button13" value="1" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button14" value=";" onclick="btnClicked(this)" />
+    </div>
+
+    <div class="KeyboardButton" style="clear: both;min-width:14px;visibility:hidden"></div>
+    <div class="KeyboardButton" style=" width: 30px">
+        <input type="button" id="Button15" value="\" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button16" value="]" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button17" value="[" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button18" value="פ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button19" value="ם" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button20" value="ן" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button21" value="ו" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button22" value="ט" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button23" value="א" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button24" value="ר" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button25" value="ק" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button26" value="'" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button27" value="/" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton" style="clear: both; width: 44px;visibility:hidden" >
+        <input type="button" id="Button28" value="" onclick="btnClicked(this)" style="z-index: 903;
+            background-image: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/KeyboardEnter.png'); background-repeat: no-repeat;
+            background-position: center;" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button29" value="," onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button30" value="ף" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button31" value="ך" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button32" value="ל" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button33" value="ח" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button34" value="י" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button35" value="ע" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button36" value="כ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button37" value="ג" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button38" value="ד" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button39" value="ש" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton" style="width: 44px;visibility:hidden">
+       
+    </div>
+    <div class="KeyboardButton" style="clear: both; width: 57px;visibility:hidden">
+        <input type="button" id="Button41" value="" onclick="btnClicked(this)" style="z-index: 903;
+            background-image: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/KeyboardShift_right.png'); background-repeat: no-repeat;
+            background-position: center;" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button42" value="." onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button43" value="ץ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button44" value="ת" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button45" value="צ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button46" value="מ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button47" value="נ" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button48" value="ה" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button49" value="ב" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button50" value="ס" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton">
+        <input type="button" id="Button51" value="ז" onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton" style="width: 58px;visibility:hidden">
+        <input type="button" id="Button53" value="" onclick="btnClicked(this)" style="z-index: 903;
+            background-image: url('https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/KeyboardShift_right.png'); background-repeat: no-repeat;
+            background-position: center;" />
+    </div>
+    <div class="KeyboardButton" style="clear: both; width: 62px;visibility:hidden">
+        <input type="button" id="Button52" value="Alt+Ctrl" onclick="" />
+    </div>
+    <div class="KeyboardButton" style="width: 257px">
+        <input type="button" id="Button54" value=" " onclick="btnClicked(this)" />
+    </div>
+    <div class="KeyboardButton" style="min-width:10px;visibility:hidden">
+    </div>
+     <div class="KeyboardButton" style="width: 50px;">
+        <input type="button" id="Button55" value="סגירה" onclick="CloseKeyboard()"  />
+    </div>
+</div>
+
+    <form method="post" action="https://b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm.aspx?E=2B00AF6B6F3D7B3EC493EB26BB8710BE" onkeypress="javascript:return WebForm_FireDefaultButton(event, 'FormsButtonsPlaceHolder_btnEnd')" id="form1">
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="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" />
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['form1'];
+if (!theForm) {
+    theForm = document.form1;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<script src="https://b2b.btl.gov.il/BTL.ILG.Payments/WebResource.axd?d=bROi_Cpfsd7DhU0rkzbW-OpkWxd5Ia-bhda0DIv5qxB_Ynv08elhUoo6PZ7n-aM8hFSbat_078cW8Q2T8YLcmvviJxeMzKSWsNI47zdyCGA1&amp;t=638533533178179347" type="text/javascript"></script>
+
+<div class="aspNetHidden">
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="5FE43A18" />
+	<input type="hidden" name="__VIEWSTATEENCRYPTED" id="__VIEWSTATEENCRYPTED" value="" />
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="peYWQN8YYDa3UNNJZJ0ULfiGfzAeUN4duTUGpGDnjqa+iWhc+/Iu5MBl12teJ9/PV86jP9yqUZ/Y/xTXygMgKoK4D7kltaqocxypPEI2+PlEPJbYggXF8qHsuR7bZiogE0aYUsIx8eotVcktiukQuFMWyiKCrquvouwVKPU0vLkeljmFxVI8FQ3dt/tOWENoEWEIrYnm8DBTHM/20j3zqltFtqUB/GWfNukYbKn/xKg5khSVSSMpgnLry1LLtBRujGro9AmykLD/SyonLWvNkNyU7UTZlDlGrQ25Hn1/LWIxneLq/wpzCSegz92QNBebUCuIA7BBmFf4Iq1OpBopELpdiKDd5dDHhFDRoOqAaAc=" />
+</div>
+        
+        <input type="hidden" name="ctl00$HiddenCaptchaValue" id="HiddenCaptchaValue" value="6LfBGVkqAAAAAPjGQs3MckRUzop3prHXEsqE_CzV" />
+        <input type="hidden" name="ctl00$HiddenCaptchaScore" id="HiddenCaptchaScore" value="0.0" />
+        <input type="hidden" name="ctl00$HiddenCaptchaV2Value" id="HiddenCaptchaV2Value" />
+        <input type="hidden" name="ctl00$HiddenFuncationCallingName" id="HiddenFuncationCallingName" />
+
+
+        <!-- general labels, used in pages -->
+        <label id="lblPlaceHolderZehut" style="display: none">
+            כולל ספרת ביקורת</label>
+        <label id="lblPlaceHolder4digits" style="display: none">
+            4 ספרות</label>
+        <label id="lblPlaceHolder2digits" style="display: none">
+            2 ספרות</label>
+        <label id="lblPlaceHolderHebrewOnly" style="display: none">
+            עברית בלבד</label>
+        <label id="lblPlaceHolderDigitsOnly" style="display: none">
+            ספרות בלבד</label>
+        <label id="lblPlaceHolderOnlyImut" style="display: none">
+            לאימות בלבד</label>
+        <label id="lblPlaceHolderNoAgurot" style="display: none">
+            ללא אגורות</label>
+        <label id="lblPlaceHolderTaarichHanpaka" style="display: none">
+            תאריך הנפקת ת.ז. מופיע בתחתית תעודת הזהות
+        </label>
+        <!-- Background -->
+        <div id="divMasterBanner" class="masterBanner" style="background-image: url(https://b2b.btl.gov.il/BTL.ILG.Payments/Images/Banner_Connector.png);">
+            <div style="width: 975px; margin: 0px auto;">
+                <!--img src="Images/Banner.png" height="70px" width="975px" alt="המוסד לביטוח לאומי, אתר התשלומים דיווחים ושירותים"/-->
+                <img src="https://b2b.btl.gov.il/BTL.ILG.Payments/Images/Banner.png?ver=1" height="70px" width="975px" alt="הביטוח הלאומי, אתר התשלומים דיווחים ושירותים"
+                    usemap="#image-map" />
+                <map id="image-map" name="image-map">
+                    <area target="_blank" alt="דף הבית, הביטוח הלאומי" title="דף הבית, הביטוח הלאומי" href="https://www.btl.gov.il/" coords="259,15,727,100" shape="rect">
+                    <area target="" alt="דף הבית, אתר תשלומים, דיווחים ושרותים" title="דף הבית, אתר תשלומים, דיווחים ושרותים" href="HomePage.html" coords="7,10,225,90" shape="rect">
+                </map>
+                <span id="lblSviva" class="ProductionHide" style="font-size:x-large;color:crimson;background-color:yellow;">סביבת ייצור</span>
+            </div>
+            
+        </div>
+        <div id="divMasterBackground" class="masterBackground">
+        </div>
+        <!-- End of Background -->
+        <div id="divMasterContentPlaceholder" class="MasterContentPlaceholder">
+            
+            
+   
+
+            <div id="mainDiv" class="mainDiv" dir="rtl">
+                <div id="panelMain" class="panelMain">
+	
+                    <div id="divFormDetailsTitle" class="FormDetailsTitle">
+
+                        <h1>
+                            <span id="lblTitleFormName">הפקת תעודת נכה דיגיטלית</span>
+                            <span id="lblContentStageName" class="visuallyhidden">הצגת תעודה</span>
+                            <span id="lblContentErrorMsg" class="visuallyhidden"></span>
+                        </h1>
+                        <div id="divFormID">
+                            <h2 class="details-bar">
+                                <!--<i class="fa fa-info-circle" aria-hidden="true"></i>-->
+                                <span id="lblMezaheTofesTitle"></span>
+                                <span id="lblMezaheTofesValue"></span></h2>
+                        </div>
+
+                    </div>
+                    <div id="divUnderLine" class="underLine">
+                    </div>
+                    <div id="divSubTitle" class="SubTitle">
+                        <h2 class="H4Style">
+                            <span id="lblSubTitle"></span></h2>
+                    </div>
+                    <span id="spanStages" class="Stages"><span class="StagesList">
+                        
+                                
+                                <span id="listStages_spanStage_0" class="stage middleStage">
+                                    <div id="divMobileTitle" class="divMobileTitle">
+                                        <div style="display: table-cell; width: 18px;">
+                                            <img id="imgNum" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_1.png" />
+                                            <img id="imgNumB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_1.png" />
+                                        </div>
+                                        <div class="stageBackground" style="display: table-cell; width: auto; float: none; background-repeat: repeat-x; background-position: top center;">
+                                            &nbsp;
+                                        </div>
+                                        <div style="display: table-cell; width: 13px;">
+                                            <img id="imgArr" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_middle.png" />
+                                            <img id="imgArrB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_middle.png" />
+                                            <img id="img1" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_end.png" />
+                                            <img id="img2" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_end.png" />
+                                            <img id="img3" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_beforeActive.png" />
+                                        </div>
+                                    </div>
+                                    <div id="divRegularTitle" class="divRegularTitle">
+                                        <label id="lbl1">
+                                            1.
+                                        פרטי המבוטח</label>
+                                    </div>
+                                    <input type="hidden" name="ctl00$listStages$ctrl0$hiddenStageName" id="listStages_hiddenStageName_0" value="פרטי המבוטח" />
+                                </span>
+                            
+                                <span id="listStages_spanStage_1" class="stage beforeStage">
+                                    <div id="divMobileTitle" class="divMobileTitle">
+                                        <div style="display: table-cell; width: 18px;">
+                                            <img id="imgNum" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_2.png" />
+                                            <img id="imgNumB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_2.png" />
+                                        </div>
+                                        <div class="stageBackground" style="display: table-cell; width: auto; float: none; background-repeat: repeat-x; background-position: top center;">
+                                            &nbsp;
+                                        </div>
+                                        <div style="display: table-cell; width: 13px;">
+                                            <img id="imgArr" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_middle.png" />
+                                            <img id="imgArrB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_middle.png" />
+                                            <img id="img1" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_end.png" />
+                                            <img id="img2" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_end.png" />
+                                            <img id="img3" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_beforeActive.png" />
+                                        </div>
+                                    </div>
+                                    <div id="divRegularTitle" class="divRegularTitle">
+                                        <label id="lbl2">
+                                            2.
+                                        פרטי הזדהות</label>
+                                    </div>
+                                    <input type="hidden" name="ctl00$listStages$ctrl1$hiddenStageName" id="listStages_hiddenStageName_1" value="פרטי הזדהות" />
+                                </span>
+                            
+                                <span id="listStages_spanStage_2" class="activeStage lastStage">
+                                    <div id="divMobileTitle" class="divMobileTitle">
+                                        <div style="display: table-cell; width: 18px;">
+                                            <img id="imgNum" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_3.png" />
+                                            <img id="imgNumB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_3.png" />
+                                        </div>
+                                        <div class="stageBackground" style="display: table-cell; width: auto; float: none; background-repeat: repeat-x; background-position: top center;">
+                                            &nbsp;
+                                        </div>
+                                        <div style="display: table-cell; width: 13px;">
+                                            <img id="imgArr" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_middle.png" />
+                                            <img id="imgArrB" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_middle.png" />
+                                            <img id="img1" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_end.png" />
+                                            <img id="img2" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Blue_arrow_end.png" />
+                                            <img id="img3" src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Grey_arrow_beforeActive.png" />
+                                        </div>
+                                    </div>
+                                    <div id="divRegularTitle" class="divRegularTitle">
+                                        <label id="lbl3">
+                                            3.
+                                        הצגת תעודה</label>
+                                    </div>
+                                    <input type="hidden" name="ctl00$listStages$ctrl2$hiddenStageName" id="listStages_hiddenStageName_2" value="הצגת תעודה" />
+                                </span>
+                            
+                            
+                    </span></span><span id="divMobileStageTitle" class="divMobileStageTitle">
+                        <span id="lblStageTitle" class="divMobileStageTitleLabel">הצגת תעודה</span>
+                    </span>
+                    <div id="divContent" class="panelContentBorder" role="region" aria-labelledby="lblContentStageNumber">
+                        
+
+                        <span id="lblContentFormName" class="visuallyhidden">הפקת תעודת נכה דיגיטלית</span>
+                        <span id="lblContentStageNumber" class="visuallyhidden">הצגת תעודה,  שלב 3 מתוך 3</span>
+                        <span id="lblContentPageAttentionMessage" class="visuallyhidden"></span>
+                        
+                        <div id="divMainError">
+                            <span id="lblErrorHeader" class="visuallyhidden"></span>
+                            
+
+                            
+                            
+                        </div>
+                        
+                        <div id="divHatzharatPratiut">
+
+
+                            <span id="Label1" style="font-weight:bold;">
+                               לתשומת ליבך,
+                            </span>
+                            <br />
+                            <br />
+                            יש לאשר שקראת והבנת את <a href="http://www.btl.gov.il/About/Pages/MdiniyutPratiut.aspx" title="נפתח בחלון חדש" target="_blank">הצהרת הפרטיות</a>
+                            <br />
+                            <br />
+                            <br />
+                            <span style="display: inline-block; vertical-align: sub" class="blueButton mobileAlignCenter">
+                                <input type="submit" name="ctl00$btnMasterHatzhara" value="אישור" id="btnMasterHatzhara" /></span>
+                            <span>&nbsp;</span>
+                            <span style="display: inline-block; vertical-align: sub" class="grayButton mobileAlignCenter">
+                                <input type="submit" name="ctl00$btnMasterBitulHatzhara" value="ביטול" id="btnMasterBitulHatzhara" /></span>
+                        </div>
+                        <div id="divHatzharatPratiutArabic" style="display: none">
+
+
+                            <span id="Label3" style="font-weight:bold;">
+                               لانتباهك،
+                            </span>
+                            <br />
+                            <br />
+                            يجب التأكيد بأنك قرأت وفهمت <a href="http://www.btl.gov.il/Arabic HomePage/about_ar/Pages/MdiniyutPratiut.aspx" title="נפתח בחלון חדש" target="_blank">التصريح بالحفاظ على الخصوصية</a>
+                            <br />
+                            <br />
+                            <br />
+                            <span style="display: inline-block; vertical-align: sub" class="blueButton mobileAlignCenter">
+                                <input type="submit" name="ctl00$Button1" value="تأكيد" id="Button1" /></span>
+                            <span>&nbsp;</span>
+                            <span style="display: inline-block; vertical-align: sub" class="grayButton mobileAlignCenter">
+                                <input type="submit" name="ctl00$Button2" value="إلغاء" id="Button2" /></span>
+                        </div>
+                        
+                    </div>
+                    <div id="divButtons" class="panelButtons">
+                        
+                    </div>
+                    <!--
+                    <asp:Panel ID="panelSupportInfo" runataaaa="serveraaaa" CssClass="panelSupportInfo" Visible="false">
+                        <label style="color: Blue;">
+                            לתמיכה טלפונית
+                        </label>
+                        <label style="color: Gray;">
+                            ניתן להתקשר ל 08-6509920 בין השעות 8:00-15:00, לפרטים נוספים ניתן ללחוץ
+                            <a id="HyperLink1" href="About.aspx">כאן</a></label>
+                    </asp:Panel>
+                    -->
+                
+</div>
+                <div id="divAsideLink" class="divAsideLink">
+                    <a href="javascript:goToPageFromClient('HomePage.aspx')" style="text-decoration: none">
+                        <span id="Label2" class="boldInstruction">חזרה לכל הפעולות</span>
+                        <img src="https://b2b.btl.gov.il/BTL.ILG.Payments/Icons/Arrow.png" style="padding-right: 4px; border: 0px;" alt="" />
+                    </a>
+                </div>
+            </div>
+        </div>
+        <!-- חלון אודות -->
+        
+        
+        <!-- סוף חלון אודות ותנאי שימוש -->
+        <!-- חלון פנו אלינו -->
+        
+        <!-- סוף חלון פנו אלינו -->
+        <div id="divMasterFooter" class="linkList MasterFooter">
+            <div style="display: inline">
+                
+                <a id="HyperLinkTnaeyShimush" title="תנאי שימוש" href="https://b2b.btl.gov.il/BTL.ILG.Payments/TnaeyShimush.aspx" target="_blank"
+                    class="LinkWithTooltip">תנאי שימוש<span>נפתח בחלון חדש</span></a> &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                
+                <a id="HyperLinkOdot" title="אודות" href="https://b2b.btl.gov.il/BTL.ILG.Payments/Odot.aspx" target="_blank" class="LinkWithTooltip">אודות<span>נפתח בחלון חדש</span></a> &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                
+                <a id="HyperLinkPnuElenu" title="פנו אלינו" href="https://b2b.btl.gov.il/BTL.ILG.Payments/PnuElenu.aspx" target="_blank"
+                    class="LinkWithTooltip">פנו אלינו<span>נפתח בחלון חדש</span></a> &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                <a id="HyperLinkAvtachatMeyda" title="אבטחת מידע" href="https://b2b.btl.gov.il/BTL.ILG.Payments/AvtachatMeyda.aspx" target="_blank"
+                    class="LinkWithTooltip">אבטחת מידע<span>נפתח בחלון חדש</span></a> &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                <a id="HyperLinkMedinyotPratiot" title="מדיניות פרטיות" href="http://www.btl.gov.il/About/Pages/MdiniyutPratiut.aspx" class="LinkWithTooltip" target="_blank">מדיניות פרטיות<span>נפתח בחלון חדש</span></a>
+                &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                <a id="HyperLink4" title="הצהרת נגישות" href="https://www.btl.gov.il/About/Pages/NegishutHatzara.aspx" class="LinkWithTooltip" target="_blank">הצהרת נגישות<span>נפתח בחלון חדש</span></a>
+                &nbsp;-&nbsp;
+            </div>
+            <div style="display: inline">
+                <a id="HyperLinkBTL" title="www.btl.gov.il" href="https://www.btl.gov.il/" class="LinkWithTooltip" target="_blank"><!--www.btl.gov.il-->אתר ראשי<span>נפתח בחלון חדש</span></a>
+            </div>
+            <br />
+            כל הזכויות שמורות &copy; המוסד לביטוח לאומי
+        <div style="text-align: center; padding-bottom: 5px">
+            מדינת ישראל
+            <img src="https://b2b.btl.gov.il/BTL.ILG.Payments/Images/medina_logo.gif" alt="" align="middle" border="0" />
+            המוסד לביטוח לאומי
+        </div>
+        </div>
+    
+  <script src="../../www.google.com/recaptcha/api54b3.js?render=6LfBGVkqAAAAAPjGQs3MckRUzop3prHXEsqE_CzV" async="async" defer="defer"></script></form>
+</body>
+
+<!-- Mirrored from b2b.btl.gov.il/BTL.ILG.Payments/TeudatNecheForm.aspx?E=2B00AF6B6F3D7B3EC493EB26BB8710BE by HTTrack Website Copier/3.x [XR&CO'2014], Mon, 04 May 2026 19:21:11 GMT -->
+</html>
