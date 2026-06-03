@@ -31,12 +31,16 @@ from app.activity_store import (
     summary as activity_summary,
 )
 from app.admin_auth import (
+    ADMIN_TG_SESS_REFRESH_GRACE_SEC,
     AdminIdentity,
+    admin_ids,
     effective_admin_secret,
     mint_admin_tg_sess,
     mint_user_tg_sess,
     require_admin,
     resolve_telegram_webapp_user,
+    verify_admin_tg_sess,
+    verify_telegram_init_data,
     verify_user_tg_sess,
 )
 from app.admin_control import get_control_state, maintenance_mode_enabled, set_maintenance_mode
@@ -882,10 +886,41 @@ def admin_debug(
 
 
 @app.post("/api/admin/session")
-def admin_session(identity: AdminIdentity = Depends(require_admin)) -> dict[str, str]:
-    if identity.telegram_user is None:
+def admin_session(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_telegram_init_data: str | None = Header(default=None, alias="X-Telegram-Init-Data"),
+    tg_init_data: str | None = Query(default=None),
+    tg_sess: str | None = Query(default=None),
+) -> dict[str, str]:
+    init_data = (
+        x_telegram_init_data
+        or request.headers.get("x-telegram-init-data", "")
+        or request.headers.get("X-Telegram-Init-Data", "")
+        or tg_init_data
+        or ""
+    ).strip()
+    auth = (authorization or request.headers.get("authorization") or "").strip()
+    if not init_data and auth.lower().startswith("tma "):
+        init_data = auth[4:].strip()
+    if init_data:
+        user = verify_telegram_init_data(init_data)
+        if user.id in admin_ids():
+            return {"tg_sess": mint_admin_tg_sess(user.id)}
+        raise HTTPException(status_code=403, detail="admin_only")
+
+    sess_user = verify_admin_tg_sess(
+        (tg_sess or "").strip(),
+        allow_expired_grace_sec=ADMIN_TG_SESS_REFRESH_GRACE_SEC,
+    )
+    if sess_user:
+        return {"tg_sess": mint_admin_tg_sess(sess_user.id)}
+
+    secret = effective_admin_secret()
+    if secret and auth == f"Bearer {secret}":
         return {"tg_sess": ""}
-    return {"tg_sess": mint_admin_tg_sess(identity.telegram_user.id)}
+
+    raise HTTPException(status_code=401, detail="admin_auth_required")
 
 
 @app.get("/api/admin/summary")

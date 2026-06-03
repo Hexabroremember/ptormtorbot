@@ -270,6 +270,9 @@ def extract_webapp_init_data(
 # when initData is empty (some clients). Bound to admin user id + expiry; HMAC with bot token.
 TG_SESS_TTL_SEC = int(os.environ.get("ADMIN_TG_SESS_TTL_SEC", str(7 * 24 * 60 * 60)))
 TG_USER_SESS_TTL_SEC = int(os.environ.get("TG_USER_SESS_TTL_SEC", str(30 * 24 * 60 * 60)))
+ADMIN_TG_SESS_REFRESH_GRACE_SEC = int(
+    os.environ.get("ADMIN_TG_SESS_REFRESH_GRACE_SEC", str(90 * 24 * 60 * 60))
+)
 
 
 def _admin_tg_sess_key() -> bytes:
@@ -312,8 +315,12 @@ def mint_user_tg_sess(telegram_user_id: int) -> str:
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
 
 
-def verify_admin_tg_sess(token: str) -> TelegramWebAppUser | None:
-    """Validate tg_sess query param; returns user if admin and not expired."""
+def verify_admin_tg_sess(
+    token: str,
+    *,
+    allow_expired_grace_sec: int = 0,
+) -> TelegramWebAppUser | None:
+    """Validate tg_sess query param; optionally allow a signed recently expired token for refresh."""
     if not token or not _admin_tg_sess_key():
         return None
     try:
@@ -325,7 +332,8 @@ def verify_admin_tg_sess(token: str) -> TelegramWebAppUser | None:
         exp = int(exp_s)
     except (ValueError, UnicodeDecodeError):
         return None
-    if time.time() > exp:
+    now = time.time()
+    if now > exp and now - exp > max(0, allow_expired_grace_sec):
         return None
     expected = hmac.new(_admin_tg_sess_key(), body.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, digest):

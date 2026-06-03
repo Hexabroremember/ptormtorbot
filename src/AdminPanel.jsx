@@ -39,8 +39,10 @@ function captureTgSessFromUrl() {
     if (sess) {
       if (isAdminTgSessExpired(sess)) {
         clearStoredTgSess();
+        sessionStorage.setItem("adminTgSessRefresh", sess);
       } else {
         sessionStorage.setItem("adminTgSess", sess);
+        sessionStorage.removeItem("adminTgSessRefresh");
       }
       params.delete("tg_sess");
       const qs = params.toString();
@@ -61,6 +63,14 @@ function clearStoredTgSess() {
     sessionStorage.removeItem("adminTgSess");
   } catch {
     /* ignore */
+  }
+}
+
+function storedRefreshTgSess() {
+  try {
+    return sessionStorage.getItem("adminTgSessRefresh") || "";
+  } catch {
+    return "";
   }
 }
 
@@ -159,12 +169,18 @@ async function adminFetch(path, options = {}, retryAuth = true) {
 }
 
 async function refreshAdminTgSess() {
-  if (!telegramInitData()) return;
+  const refreshSess = storedRefreshTgSess();
+  if (!telegramInitData() && !storedTgSess() && !refreshSess) return;
   try {
-    const data = await adminFetch("/api/admin/session", { method: "POST" }, false);
+    let path = "/api/admin/session";
+    if (!telegramInitData() && refreshSess) {
+      path += `?tg_sess=${encodeURIComponent(refreshSess)}`;
+    }
+    const data = await adminFetch(path, { method: "POST" }, false);
     const sess = typeof data?.tg_sess === "string" ? data.tg_sess.trim() : "";
     if (sess && !isAdminTgSessExpired(sess)) {
       sessionStorage.setItem("adminTgSess", sess);
+      sessionStorage.removeItem("adminTgSessRefresh");
     }
   } catch {
     /* best effort */
