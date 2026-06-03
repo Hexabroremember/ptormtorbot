@@ -88,6 +88,16 @@ def main() -> None:
                 "(no in-process polling — same token must not poll elsewhere unless intentional)",
                 mode,
             )
+        elif os.environ.get("START_TELEGRAM_BOT_SUBPROCESS", "1").strip().lower() in (
+            "0",
+            "false",
+            "no",
+            "off",
+        ):
+            logger.info(
+                "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "
+                "FastAPI webhook fallback will receive Telegram updates on this service"
+            )
         else:
             logger.info(
                 "[telegram:bot] subprocess skipped START_TELEGRAM_BOT_SUBPROCESS disabled; "

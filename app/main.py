@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, Field
+from telegram import Update as TelegramUpdate
 
 from app.activity_store import (
     get_event,
@@ -329,6 +330,91 @@ def _index_html_response() -> HTMLResponse:
 
 
 app = FastAPI(title="PDF Name Editor")
+_telegram_webhook_app = None
+
+
+def _telegram_updates_mode() -> str:
+    return os.environ.get("TELEGRAM_BOT_UPDATES_MODE", "polling").strip().lower()
+
+
+def _telegram_polling_disabled() -> bool:
+    return os.environ.get("START_TELEGRAM_BOT_SUBPROCESS", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _should_enable_telegram_webhook() -> bool:
+    mode = _telegram_updates_mode()
+    if mode in ("webhook", "auto"):
+        return True
+    if mode in ("none", "external", "off"):
+        return False
+    if mode == "polling":
+        return _telegram_polling_disabled()
+    return _telegram_polling_disabled()
+
+
+def _telegram_webhook_secret_path(token: str) -> str:
+    raw = os.environ.get("TELEGRAM_WEBHOOK_SECRET_PATH", "").strip().strip("/")
+    if raw:
+        return raw.rsplit("/", 1)[-1]
+    return secrets.token_urlsafe(24)
+
+
+@app.on_event("startup")
+async def startup_telegram_webhook() -> None:
+    global _telegram_webhook_app
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token or not _should_enable_telegram_webhook():
+        return
+    base = effective_public_base_url()
+    if not base:
+        logger.warning("[telegram:webhook] skipped public_base_url_missing")
+        return
+    from app.telegram_bot import build_bot_application, configure_bot_application
+
+    tg_app = build_bot_application(token, clear_webhook_on_init=False)
+    await tg_app.initialize()
+    await tg_app.start()
+    await configure_bot_application(tg_app, clear_webhook=False)
+    path = _telegram_webhook_secret_path(token)
+    webhook_url = f"{base.rstrip('/')}/telegram/webhook/{path}"
+    await tg_app.bot.set_webhook(
+        url=webhook_url,
+        allowed_updates=TelegramUpdate.ALL_TYPES,
+        drop_pending_updates=True,
+    )
+    app.state.telegram_webhook_path = path
+    _telegram_webhook_app = tg_app
+    logger.info("[telegram:webhook] enabled url=%s", webhook_url)
+
+
+@app.on_event("shutdown")
+async def shutdown_telegram_webhook() -> None:
+    global _telegram_webhook_app
+    if _telegram_webhook_app is None:
+        return
+    await _telegram_webhook_app.stop()
+    await _telegram_webhook_app.shutdown()
+    _telegram_webhook_app = None
+
+
+@app.post("/telegram/webhook/{secret}")
+async def telegram_webhook(secret: str, request: Request) -> dict[str, bool]:
+    if secret != getattr(app.state, "telegram_webhook_path", None):
+        raise HTTPException(status_code=404, detail="not_found")
+    if _telegram_webhook_app is None:
+        raise HTTPException(status_code=503, detail="telegram_webhook_not_ready")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_json") from exc
+    update = TelegramUpdate.de_json(payload, _telegram_webhook_app.bot)
+    await _telegram_webhook_app.process_update(update)
+    return {"ok": True}
 
 
 def _cors_allow_origins() -> list[str]:

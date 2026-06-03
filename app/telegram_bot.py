@@ -808,7 +808,50 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
 
-def _run_polling_with_token(token: str) -> None:
+async def configure_bot_application(
+    application: Application,
+    *,
+    clear_webhook: bool,
+) -> None:
+    if clear_webhook:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info(
+            "[telegram:bot] webhook cleared drop_pending_updates=True mode=polling "
+            "(START_TELEGRAM_BOT_SUBPROCESS / standalone bot process)"
+        )
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "פותח את השירות (מיני־אפ או צ'אט)"),
+            BotCommand("code", "הנפקת קוד תשלום (מנהלים בלבד)"),
+            BotCommand("admin", "פאנל ניהול (מנהלים בלבד)"),
+            BotCommand("help", "מדריך והסבר קצר"),
+            BotCommand("cancel", "ביטול מילוי בצ'אט"),
+        ]
+    )
+    menu_url = mini_app_entry_url()
+    if menu_url:
+        try:
+            await application.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="📋 טופס PDF",
+                    web_app=WebAppInfo(url=menu_url),
+                ),
+            )
+            logger.info("[telegram:bot] menu button set web_app_url_configured=True")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[telegram:bot] set_chat_menu_button failed: %s", exc)
+    else:
+        logger.warning(
+            "[telegram:bot] menu button skipped web_app_url_configured=False "
+            "(set WEB_APP_URL / public domain for Mini App entry)"
+        )
+
+
+def build_bot_application(
+    token: str,
+    *,
+    clear_webhook_on_init: bool,
+) -> Application:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         import warnings
@@ -836,37 +879,7 @@ def _run_polling_with_token(token: str) -> None:
             logger.exception("Unhandled error in telegram handler", exc_info=err)
 
     async def post_init(application: Application) -> None:
-        await application.bot.delete_webhook(drop_pending_updates=True)
-        logger.info(
-            "[telegram:bot] webhook cleared drop_pending_updates=True mode=polling "
-            "(START_TELEGRAM_BOT_SUBPROCESS / standalone bot process)"
-        )
-        await application.bot.set_my_commands(
-            [
-                BotCommand("start", "פותח את השירות (מיני־אפ או צ'אט)"),
-                BotCommand("code", "הנפקת קוד תשלום (מנהלים בלבד)"),
-                BotCommand("admin", "פאנל ניהול (מנהלים בלבד)"),
-                BotCommand("help", "מדריך והסבר קצר"),
-                BotCommand("cancel", "ביטול מילוי בצ'אט"),
-            ]
-        )
-        menu_url = mini_app_entry_url()
-        if menu_url:
-            try:
-                await application.bot.set_chat_menu_button(
-                    menu_button=MenuButtonWebApp(
-                        text="📋 טופס PDF",
-                        web_app=WebAppInfo(url=menu_url),
-                    ),
-                )
-                logger.info("[telegram:bot] menu button set web_app_url_configured=True")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[telegram:bot] set_chat_menu_button failed: %s", exc)
-        else:
-            logger.warning(
-                "[telegram:bot] menu button skipped web_app_url_configured=False "
-                "(set WEB_APP_URL / public domain for Mini App entry)"
-            )
+        await configure_bot_application(application, clear_webhook=clear_webhook_on_init)
 
     application = Application.builder().token(token).post_init(post_init).build()
     application.add_handler(CallbackQueryHandler(callback_issue_payment_code, pattern=r"^ci:"))
@@ -905,6 +918,11 @@ def _run_polling_with_token(token: str) -> None:
     application.add_handler(conv)
     application.add_handler(MessageHandler(filters.Regex("^❓ עזרה$"), help_keyboard_open_link))
     application.add_error_handler(on_error)
+    return application
+
+
+def _run_polling_with_token(token: str) -> None:
+    application = build_bot_application(token, clear_webhook_on_init=True)
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
