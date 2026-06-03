@@ -77,6 +77,12 @@ from app.telegram_notify import (
     send_telegram_document_url,
     send_telegram_message,
 )
+from app.telegram_users_store import (
+    list_users as list_telegram_users,
+    send_broadcast,
+    summary as telegram_users_summary,
+    upsert_from_telegram_user,
+)
 from app.user_saved_forms import delete_for_user, list_for_user, upsert_for_user
 
 
@@ -277,6 +283,12 @@ class RateLimitOverrideRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=240)
 
 
+class AdminBroadcastRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4096)
+    limit: int = Field(default=500, ge=1, le=2000)
+    dry_run: bool = False
+
+
 def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dict[str, Any]:
     """Persist Mini App user + optional form snapshot when a payment code is redeemed."""
     out: dict[str, Any] = {}
@@ -411,6 +423,13 @@ def _require_mini_app_user(
 def _telegram_log_identity(tg_user) -> dict[str, Any]:
     if tg_user is None:
         return {"telegram_user_id": None, "username": None, "first_name": None}
+    try:
+        upsert_from_telegram_user(tg_user, source="mini_app", event_type="identity_seen")
+    except Exception:
+        logger.exception(
+            "[telegram:users] upsert failed telegram_user_id=%s",
+            getattr(tg_user, "id", None),
+        )
     username = getattr(tg_user, "username", None)
     first_name = getattr(tg_user, "first_name", None)
     if not username or not first_name:
@@ -867,6 +886,7 @@ def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
 
     return {
         "activity": activity_summary(),
+        "telegram_users": telegram_users_summary(),
         "payment_codes": codes_summary(),
         "coupons": coupons_summary(),
         "control": get_control_state(),
@@ -879,7 +899,59 @@ def admin_users(
     limit: int = Query(default=150, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    return list_user_directory(limit=limit, offset=offset)
+    data = list_telegram_users(limit=limit, offset=offset, include_disabled=True)
+    try:
+        activity = list_user_directory(limit=500, offset=0)
+        by_uid = {int(row["telegram_user_id"]): row for row in activity.get("items", [])}
+    except Exception:
+        by_uid = {}
+    for item in data.get("items", []):
+        agg = by_uid.get(int(item["telegram_user_id"]))
+        if not agg:
+            item.setdefault("event_count", 0)
+            item.setdefault("redeem_count", 0)
+            item.setdefault("pdf_generated_count", 0)
+            item.setdefault("pdf_download_count", 0)
+            item.setdefault("bot_events_count", 0)
+            continue
+        for key in (
+            "event_count",
+            "redeem_count",
+            "pdf_generated_count",
+            "pdf_download_count",
+            "bot_events_count",
+            "from_code_only",
+        ):
+            item[key] = agg.get(key, item.get(key))
+    return data
+
+
+@app.post("/api/admin/broadcast/send")
+def admin_send_broadcast(
+    payload: AdminBroadcastRequest,
+    identity: AdminIdentity = Depends(require_admin),
+) -> dict[str, Any]:
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="broadcast_text_required")
+    result = send_broadcast(
+        text,
+        limit=payload.limit,
+        dry_run=payload.dry_run,
+    )
+    log_event(
+        "admin_broadcast_sent" if not payload.dry_run else "admin_broadcast_dry_run",
+        source="admin",
+        telegram_user_id=identity.telegram_user.id if identity.telegram_user else None,
+        meta={
+            "target_count": result.get("target_count"),
+            "sent": result.get("sent"),
+            "failed": result.get("failed"),
+            "dry_run": payload.dry_run,
+            "text_len": len(text),
+        },
+    )
+    return result
 
 
 @app.get("/api/admin/events")

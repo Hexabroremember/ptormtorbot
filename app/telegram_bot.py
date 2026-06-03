@@ -48,6 +48,7 @@ from app.payment_code_meta import TIER_LABELS as CODE_TIER_LABELS
 from app.payment_code_meta import heading_for_issue_key, meta_for_issue_key
 from app.pdf_raster import pdf_bytes_to_telegram_jpeg
 from app.public_url import effective_public_base_url
+from app.telegram_users_store import upsert_from_telegram_user
 
 load_dotenv(ROOT_DIR / ".env", override=False)
 
@@ -485,6 +486,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message is None:
         return ConversationHandler.END
     user = update.effective_user
+    try:
+        upsert_from_telegram_user(user, source="telegram_bot", event_type="bot_start")
+    except Exception:
+        logger.exception(
+            "[telegram:users] upsert failed in /start telegram_user_id=%s",
+            user.id if user else None,
+        )
     log_event(
         "bot_start",
         source="telegram_bot",

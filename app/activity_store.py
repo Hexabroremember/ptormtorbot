@@ -69,6 +69,20 @@ def log_event(
     meta: dict[str, Any] | None = None,
 ) -> None:
     init_db()
+    if telegram_user_id is not None:
+        try:
+            from app.telegram_users_store import upsert_telegram_user
+
+            upsert_telegram_user(
+                telegram_user_id,
+                username=username,
+                first_name=first_name,
+                source=source,
+                event_type=event_type,
+            )
+        except Exception:
+            # User-directory writes must never block the primary event flow.
+            pass
     payload = json.dumps(meta or {}, ensure_ascii=False, separators=(",", ":"))
     sql = qp(
         """

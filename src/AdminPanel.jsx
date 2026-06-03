@@ -268,6 +268,8 @@ export default function AdminPanel() {
   const [hasTgSess, setHasTgSess] = useState(false);
   const [users, setUsers] = useState([]);
   const [usersTotal, setUsersTotal] = useState(0);
+  const [broadcastText, setBroadcastText] = useState("");
+  const [broadcastResult, setBroadcastResult] = useState(null);
   const [detailEventId, setDetailEventId] = useState(null);
   const [limitOverrides, setLimitOverrides] = useState([]);
   const [cryptoOrders, setCryptoOrders] = useState([]);
@@ -544,6 +546,29 @@ export default function AdminPanel() {
     }
   };
 
+  const sendBroadcast = async (dryRun = false) => {
+    const text = broadcastText.trim();
+    if (!text) {
+      setError("נא להזין הודעה לשליחה");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setBroadcastResult(null);
+    try {
+      const data = await adminFetch("/api/admin/broadcast/send", {
+        method: "POST",
+        body: JSON.stringify({ text, limit: 1000, dry_run: dryRun }),
+      });
+      setBroadcastResult(data);
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copyText = async (text) => {
     await navigator.clipboard?.writeText(text);
   };
@@ -673,6 +698,12 @@ export default function AdminPanel() {
             label="משתמשים מזוהים"
             value={summary?.activity?.unique_users ?? "-"}
             tone="emerald"
+          />
+          <StatCard
+            icon={Send}
+            label="זמינים לתפוצה"
+            value={summary?.telegram_users?.broadcastable ?? "-"}
+            tone="blue"
           />
           <StatCard
             icon={Receipt}
@@ -919,6 +950,62 @@ export default function AdminPanel() {
         <section className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-lg font-black">
+              <Send size={20} />
+              הודעת תפוצה
+            </h2>
+            <p className="text-xs text-slate-500">
+              שליחה לכל המשתמשים שפתחו את הבוט ולא נחסמו לשליחה.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+            <textarea
+              value={broadcastText}
+              onChange={(e) => setBroadcastText(e.target.value)}
+              rows={4}
+              maxLength={4096}
+              placeholder="כתבו כאן את הודעת התפוצה"
+              className="min-h-28 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-blue-400"
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => sendBroadcast(true)}
+                disabled={busy || !broadcastText.trim()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-700 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-600 disabled:opacity-60"
+              >
+                <Users size={18} />
+                בדוק יעד
+              </button>
+              <button
+                type="button"
+                onClick={() => sendBroadcast(false)}
+                disabled={busy || !broadcastText.trim()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-60"
+              >
+                {busy ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                שלח תפוצה
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            {broadcastText.length}/4096 תווים · HTML בסיסי נתמך כמו בהודעות הבוט.
+          </div>
+          {broadcastResult ? (
+            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-950">
+              {broadcastResult.dry_run ? (
+                <span>נמצאו {broadcastResult.target_count} משתמשים זמינים לשליחה.</span>
+              ) : (
+                <span>
+                  נשלחו {broadcastResult.sent} הודעות, נכשלו {broadcastResult.failed} מתוך {broadcastResult.target_count}.
+                </span>
+              )}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-white p-5 text-slate-900">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-black">
               <UserCircle size={20} />
               משתמשים ({usersTotal})
             </h2>
@@ -927,17 +1014,19 @@ export default function AdminPanel() {
             </p>
           </div>
           <div className="overflow-x-auto rounded-xl border border-slate-100">
-            <table className="min-w-[720px] w-full text-sm">
+            <table className="min-w-[900px] w-full text-sm">
               <thead className="bg-slate-50 text-right text-xs font-bold text-slate-600">
                 <tr>
                   <th className="px-3 py-2">מזהה</th>
                   <th className="px-3 py-2">שם</th>
                   <th className="px-3 py-2">@</th>
+                  <th className="px-3 py-2">תפוצה</th>
                   <th className="px-3 py-2">אירועים</th>
                   <th className="px-3 py-2">מימוש קוד</th>
                   <th className="px-3 py-2">יצירת PDF</th>
                   <th className="px-3 py-2">הורדות</th>
                   <th className="px-3 py-2">בוט</th>
+                  <th className="px-3 py-2">שליחה אחרונה</th>
                   <th className="px-3 py-2">נראה לאחרונה</th>
                 </tr>
               </thead>
@@ -954,7 +1043,21 @@ export default function AdminPanel() {
                       ) : null}
                     </td>
                     <td className="px-3 py-2 font-mono text-xs ltr">{u.username ? `@${u.username}` : "אין @"}</td>
-                    <td className="px-3 py-2">{u.event_count}</td>
+                    <td className="px-3 py-2">
+                      {u.can_broadcast ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
+                          פעיל
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
+                          חסום
+                        </span>
+                      )}
+                      {u.broadcast_failure_count > 0 ? (
+                        <span className="mr-1 text-xs text-red-600">({u.broadcast_failure_count})</span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">{u.event_count ?? 0}</td>
                     <td className="px-3 py-2">
                       {u.redeem_count > 0 ? (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
@@ -962,9 +1065,10 @@ export default function AdminPanel() {
                         </span>
                       ) : "0"}
                     </td>
-                    <td className="px-3 py-2">{u.pdf_generated_count}</td>
-                    <td className="px-3 py-2">{u.pdf_download_count}</td>
-                    <td className="px-3 py-2">{u.bot_events_count}</td>
+                    <td className="px-3 py-2">{u.pdf_generated_count ?? 0}</td>
+                    <td className="px-3 py-2">{u.pdf_download_count ?? 0}</td>
+                    <td className="px-3 py-2">{u.bot_events_count ?? 0}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(u.last_broadcast_at)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-xs">{formatDate(u.last_seen_ts)}</td>
                   </tr>
                 ))}
