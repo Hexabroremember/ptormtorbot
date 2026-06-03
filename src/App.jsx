@@ -558,6 +558,7 @@ const App = () => {
   const [paymentCodeInput, setPaymentCodeInput] = useState("");
   const [paymentCodeError, setPaymentCodeError] = useState(null);
   const [paymentCodeSubmitting, setPaymentCodeSubmitting] = useState(false);
+  const [finalPdfToken, setFinalPdfToken] = useState("");
   const [finalPdfDownloading, setFinalPdfDownloading] = useState(false);
 
   const [step1Error, setStep1Error] = useState(null);
@@ -1017,6 +1018,10 @@ const App = () => {
 
   const handleInputChange = (field, value) => {
     setStep1Error(null);
+    if (paymentApproved) {
+      setPaymentApproved(false);
+      setFinalPdfToken("");
+    }
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -1038,6 +1043,7 @@ const App = () => {
     });
     cachedPreviewSigRef.current = null;
     setPaymentApproved(false);
+    setFinalPdfToken("");
     setCryptoSelected(false);
     setPaymentCodeInput("");
     setPaymentCodeError(null);
@@ -1199,6 +1205,7 @@ const App = () => {
         if (data.paid) {
           setCryptoStatus("paid");
           setPaymentApproved(true);
+          setFinalPdfToken(typeof data.final_pdf_token === "string" ? data.final_pdf_token : "");
           clearInterval(id);
         }
       } catch {
@@ -1340,7 +1347,9 @@ const App = () => {
         }),
       });
       if (res.ok) {
+        const data = await res.json().catch(() => ({}));
         setPaymentApproved(true);
+        setFinalPdfToken(typeof data.final_pdf_token === "string" ? data.final_pdf_token : "");
         setPaymentCodeInput("");
         return;
       }
@@ -1381,6 +1390,7 @@ const App = () => {
           id_number: idDigits,
           expiration_date: computeExpirationForPdf(formData.expiryOption),
           watermark: false,
+          final_pdf_token: finalPdfToken,
           telegram_init_data: initData || "",
           telegram_user_session: sess,
         }),

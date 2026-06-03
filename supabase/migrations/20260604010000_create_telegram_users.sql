@@ -30,11 +30,6 @@ CREATE INDEX IF NOT EXISTS idx_telegram_users_can_broadcast
 ALTER TABLE public.telegram_users ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE public.telegram_users FROM anon, authenticated;
+GRANT ALL ON TABLE public.telegram_users TO service_role;
 
 DROP POLICY IF EXISTS telegram_users_backend_full_access ON public.telegram_users;
-CREATE POLICY telegram_users_backend_full_access ON public.telegram_users
-  AS PERMISSIVE
-  FOR ALL
-  TO PUBLIC
-  USING (true)
-  WITH CHECK (true);

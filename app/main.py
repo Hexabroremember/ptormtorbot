@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 from io import BytesIO
 import logging
 import os
@@ -102,6 +106,7 @@ DIST_ASSETS_DIR = DIST_DIR / "assets"
 OUTPUT_PDF_FILENAME = "FormPDFPreview.pdf"
 
 logger = logging.getLogger(__name__)
+_FINAL_PDF_TOKEN_FALLBACK_SECRET = secrets.token_urlsafe(32)
 
 _TELEGRAM_USER_REQUIRED_DETAIL: dict[str, Any] = {
     "code": "telegram_user_required",
@@ -161,6 +166,7 @@ class GeneratePdfRequest(BaseModel):
     id_number: str = Field(..., min_length=1, max_length=24)
     expiration_date: str = Field(..., min_length=1, max_length=24)
     watermark: bool = False
+    final_pdf_token: str | None = Field(default=None, max_length=2000)
     telegram_init_data: str | None = Field(default=None, max_length=16000)
     telegram_user_session: str | None = Field(default=None, max_length=1000)
 
@@ -316,6 +322,90 @@ def _build_redemption_dict(tg_user: Any, form: RedeemFormSnapshot | None) -> dic
                 if s:
                     out[key] = s
     return out
+
+
+def _final_pdf_secret() -> bytes:
+    raw = (
+        os.environ.get("FINAL_PDF_TOKEN_SECRET", "").strip()
+        or effective_admin_secret()
+        or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        or _FINAL_PDF_TOKEN_FALLBACK_SECRET
+    )
+    return hashlib.sha256(f"final_pdf_token_v1:{raw}".encode("utf-8")).digest()
+
+
+def _final_pdf_form_hash(
+    *,
+    hebrew_full_name: str,
+    english_full_name: str,
+    id_number: str,
+    expiration_date: str,
+) -> str:
+    payload = {
+        "hebrew_full_name": hebrew_full_name.strip(),
+        "english_full_name": english_full_name.strip().upper(),
+        "id_number": id_number.strip(),
+        "expiration_date": expiration_date.strip(),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(data: str) -> bytes:
+    pad = "=" * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+
+def mint_final_pdf_token(
+    *,
+    form_hash: str,
+    telegram_user_id: int | None,
+    ttl_seconds: int = 15 * 60,
+) -> str:
+    body = {
+        "v": 1,
+        "form_hash": form_hash,
+        "telegram_user_id": telegram_user_id,
+        "exp": int(time.time()) + ttl_seconds,
+        "nonce": secrets.token_urlsafe(12),
+    }
+    body_raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body_b64 = _b64url_encode(body_raw)
+    sig = hmac.new(_final_pdf_secret(), body_b64.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body_b64}.{sig}"
+
+
+def verify_final_pdf_token(
+    token: str | None,
+    *,
+    form_hash: str,
+    telegram_user_id: int | None,
+) -> None:
+    if not token:
+        raise HTTPException(status_code=402, detail="final_pdf_payment_required")
+    try:
+        body_b64, sig = token.rsplit(".", 1)
+        expected = hmac.new(_final_pdf_secret(), body_b64.encode("ascii"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            raise ValueError("bad_signature")
+        body = json.loads(_b64url_decode(body_b64).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="final_pdf_token_invalid") from exc
+    if int(body.get("exp") or 0) < int(time.time()):
+        raise HTTPException(status_code=401, detail="final_pdf_token_expired")
+    if body.get("form_hash") != form_hash:
+        raise HTTPException(status_code=403, detail="final_pdf_token_form_mismatch")
+    token_uid = body.get("telegram_user_id")
+    if token_uid is not None and telegram_user_id is not None:
+        try:
+            if int(token_uid) != int(telegram_user_id):
+                raise HTTPException(status_code=403, detail="final_pdf_token_user_mismatch")
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=401, detail="final_pdf_token_invalid") from exc
 
 
 def _index_html_response() -> HTMLResponse:
@@ -2033,10 +2123,23 @@ def crypto_order_status(order_id: str = Query(..., min_length=4)) -> dict:
     order = get_order(order_id)
     if order is None:
         raise HTTPException(status_code=404, detail="order_not_found")
+    final_pdf_token = ""
+    if order.get("status") == "paid" and isinstance(order.get("form"), dict):
+        form = order["form"]
+        final_pdf_token = mint_final_pdf_token(
+            form_hash=_final_pdf_form_hash(
+                hebrew_full_name=str(form.get("hebrew_full_name") or ""),
+                english_full_name=str(form.get("english_full_name") or ""),
+                id_number=str(form.get("id_number") or ""),
+                expiration_date=str(form.get("expiration_date") or ""),
+            ),
+            telegram_user_id=order.get("telegram_user_id"),
+        )
     return {
         "order_id": order["order_id"],
         "status": order["status"],
         "paid": order["status"] == "paid",
+        "final_pdf_token": final_pdf_token,
     }
 
 
@@ -2438,7 +2541,18 @@ def redeem_payment_code(
             already_pdf_sent=already_pdf_sent,
             telegram_user_session=payload.telegram_user_session,
         )
-        return {"ok": True}
+        final_pdf_token = ""
+        if form_dict:
+            final_pdf_token = mint_final_pdf_token(
+                form_hash=_final_pdf_form_hash(
+                    hebrew_full_name=str(form_dict.get("hebrew_full_name") or ""),
+                    english_full_name=str(form_dict.get("english_full_name") or ""),
+                    id_number=str(form_dict.get("id_number") or ""),
+                    expiration_date=str(form_dict.get("expiration_date") or ""),
+                ),
+                telegram_user_id=owner_id_enriched,
+            )
+        return {"ok": True, "final_pdf_token": final_pdf_token}
     if key == "already_used":
         logger.info(
             "[purchase:redeem] failed reason=already_used code_last4=%s telegram_user_id=%s",
@@ -2492,6 +2606,17 @@ def generate_pdf(
     if payload.watermark:
         check_rate_limit("preview_pdf", request, tg_user)
     ident = _telegram_log_identity(tg_user)
+    if not payload.watermark:
+        verify_final_pdf_token(
+            payload.final_pdf_token,
+            form_hash=_final_pdf_form_hash(
+                hebrew_full_name=payload.hebrew_full_name,
+                english_full_name=payload.english_full_name,
+                id_number=payload.id_number,
+                expiration_date=payload.expiration_date,
+            ),
+            telegram_user_id=ident["telegram_user_id"],
+        )
     try:
         pdf_bytes = replace_fields(
             hebrew_full_name=payload.hebrew_full_name.strip(),
