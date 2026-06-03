@@ -6,6 +6,7 @@ import html
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
@@ -48,7 +49,7 @@ from app.payment_code_meta import TIER_LABELS as CODE_TIER_LABELS
 from app.payment_code_meta import heading_for_issue_key, meta_for_issue_key
 from app.pdf_raster import pdf_bytes_to_telegram_jpeg
 from app.public_url import effective_public_base_url
-from app.telegram_users_store import upsert_from_telegram_user
+from app.telegram_users_store import upsert_telegram_user
 
 load_dotenv(ROOT_DIR / ".env", override=False)
 
@@ -104,6 +105,74 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+_BOT_BACKGROUND_WORKERS = max(1, min(8, int(os.environ.get("BOT_BACKGROUND_WORKERS", "4"))))
+_bot_bg_executor = ThreadPoolExecutor(
+    max_workers=_BOT_BACKGROUND_WORKERS,
+    thread_name_prefix="telegram-bot-bg",
+)
+
+
+def _bot_user_snapshot(user) -> dict[str, object | None]:
+    if user is None:
+        return {
+            "telegram_user_id": None,
+            "username": None,
+            "first_name": None,
+            "last_name": None,
+            "language_code": None,
+            "is_bot": None,
+        }
+    return {
+        "telegram_user_id": getattr(user, "id", None),
+        "username": getattr(user, "username", None),
+        "first_name": getattr(user, "first_name", None),
+        "last_name": getattr(user, "last_name", None),
+        "language_code": getattr(user, "language_code", None),
+        "is_bot": getattr(user, "is_bot", False),
+    }
+
+
+def record_bot_event_async(event_type: str, user, *, meta: dict | None = None) -> None:
+    snap = _bot_user_snapshot(user)
+
+    def _run() -> None:
+        try:
+            upsert_telegram_user(
+                snap["telegram_user_id"],
+                username=snap["username"],
+                first_name=snap["first_name"],
+                last_name=snap["last_name"],
+                language_code=snap["language_code"],
+                is_bot=bool(snap["is_bot"]),
+                source="telegram_bot",
+                event_type=event_type,
+            )
+            log_event(
+                event_type,
+                source="telegram_bot",
+                telegram_user_id=snap["telegram_user_id"],
+                username=snap["username"],
+                first_name=snap["first_name"],
+                meta=meta,
+            )
+        except Exception:
+            logger.exception(
+                "[telegram:bot] async event record failed event_type=%s telegram_user_id=%s",
+                event_type,
+                snap["telegram_user_id"],
+            )
+
+    _bot_bg_executor.submit(_run)
+
+
+def schedule_start_notification(context: ContextTypes.DEFAULT_TYPE, user) -> None:
+    try:
+        context.application.create_task(notify_channel_on_bot_start(context, user))
+    except Exception:
+        logger.exception(
+            "[telegram:bot] failed to schedule start notification telegram_user_id=%s",
+            user.id if user else None,
+        )
 
 # /start notifications: add the bot as admin (post messages) in the channel.
 _START_NOTIFY_DEFAULT_CHAT_ID = "-1003569464018"
@@ -486,21 +555,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message is None:
         return ConversationHandler.END
     user = update.effective_user
-    try:
-        upsert_from_telegram_user(user, source="telegram_bot", event_type="bot_start")
-    except Exception:
-        logger.exception(
-            "[telegram:users] upsert failed in /start telegram_user_id=%s",
-            user.id if user else None,
-        )
-    log_event(
-        "bot_start",
-        source="telegram_bot",
-        telegram_user_id=user.id if user else None,
-        username=user.username if user else None,
-        first_name=user.first_name if user else None,
-    )
-    await notify_channel_on_bot_start(context, user)
+    record_bot_event_async("bot_start", user)
     if mini_app_entry_url():
         context.user_data.clear()
         uid = user.id if user else None
@@ -513,21 +568,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         if kb:
             await update.message.reply_text("\u2060", reply_markup=kb)
+        schedule_start_notification(context, user)
         return ConversationHandler.END
-    return await begin_chat_flow(update, context)
+    state = await begin_chat_flow(update, context)
+    schedule_start_notification(context, user)
+    return state
 
 
 async def begin_chat_flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Multi-step chat form — restart button, or /start when no Web App URL."""
     context.user_data.clear()
     user = update.effective_user
-    log_event(
-        "bot_form_started",
-        source="telegram_bot",
-        telegram_user_id=user.id if user else None,
-        username=user.username if user else None,
-        first_name=user.first_name if user else None,
-    )
+    record_bot_event_async("bot_form_started", user)
     uid = user.id if user else None
     bottom_kb = web_app_reply_keyboard_for_user(uid)
     chat_rm = bottom_kb or ReplyKeyboardRemove()
@@ -715,13 +767,7 @@ async def deliver_generated_pdf(
         reply_markup=again_kb,
     )
     user = update.effective_user
-    log_event(
-        "bot_pdf_delivered",
-        source="telegram_bot",
-        telegram_user_id=user.id if user else None,
-        username=user.username if user else None,
-        first_name=user.first_name if user else None,
-    )
+    record_bot_event_async("bot_pdf_delivered", user)
     reopen_kb = web_app_reply_keyboard_for_user(user.id if user else None)
     if reopen_kb:
         await context.bot.send_message(

@@ -19,7 +19,11 @@ import {
   Users,
 } from "lucide-react";
 
-import { telegramInitData } from "./telegramContext.js";
+import {
+  primeTelegramWebAppForInitData,
+  telegramInitData,
+  waitForTelegramInitData,
+} from "./telegramContext.js";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
@@ -33,51 +37,59 @@ function captureTgSessFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const sess = params.get("tg_sess");
     if (sess) {
-      sessionStorage.setItem("adminTgSess", sess);
+      if (isAdminTgSessExpired(sess)) {
+        clearStoredTgSess();
+      } else {
+        sessionStorage.setItem("adminTgSess", sess);
+      }
       params.delete("tg_sess");
       const qs = params.toString();
       const clean = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`;
       window.history.replaceState({}, "", clean);
+      return;
+    }
+    if (isAdminTgSessExpired(sessionStorage.getItem("adminTgSess") || "")) {
+      clearStoredTgSess();
     }
   } catch {
     /* ignore */
   }
 }
 
-function storedTgSess() {
+function clearStoredTgSess() {
   try {
-    return sessionStorage.getItem("adminTgSess") || "";
+    sessionStorage.removeItem("adminTgSess");
   } catch {
-    return "";
+    /* ignore */
   }
 }
 
-/** Telegram often fills initData slightly after load; fetching immediately yields admin_auth_required. */
-function waitForTelegramInitData(maxMs = 15000, intervalMs = 40) {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    let done = false;
-    let intervalId = 0;
-    const finish = (value) => {
-      if (done) return;
-      done = true;
-      window.clearInterval(intervalId);
-      resolve(value);
-    };
-    const check = () => {
-      const d = telegramInitData();
-      if (d) {
-        finish(d);
-        return;
-      }
-      if (Date.now() - start >= maxMs) {
-        finish("");
-      }
-    };
-    intervalId = window.setInterval(check, intervalMs);
-    check();
-    window.Telegram?.WebApp?.onEvent?.("viewport_changed", check);
-  });
+function isAdminTgSessExpired(sess) {
+  try {
+    const v = String(sess || "").trim();
+    if (!v) return false;
+    const pad = "=".repeat((4 - (v.length % 4)) % 4);
+    const decoded = window.atob(v + pad);
+    const [, expRaw] = decoded.split(":");
+    const exp = Number(expRaw);
+    if (!Number.isFinite(exp) || exp <= 0) return true;
+    return Date.now() >= (exp - 30) * 1000;
+  } catch {
+    return true;
+  }
+}
+
+function storedTgSess() {
+  try {
+    const sess = sessionStorage.getItem("adminTgSess") || "";
+    if (isAdminTgSessExpired(sess)) {
+      clearStoredTgSess();
+      return "";
+    }
+    return sess;
+  } catch {
+    return "";
+  }
 }
 
 function storedAdminSecret() {
@@ -118,7 +130,7 @@ function withAdminAuthQuery(path) {
   return `${url}${sep}${parts.join("&")}`;
 }
 
-async function adminFetch(path, options = {}) {
+async function adminFetch(path, options = {}, retryAuth = true) {
   const res = await fetch(withAdminAuthQuery(path), {
     ...options,
     headers: {
@@ -134,9 +146,29 @@ async function adminFetch(path, options = {}) {
     } catch {
       /* ignore */
     }
+    if (retryAuth && res.status === 401 && detail === "admin_auth_required") {
+      clearStoredTgSess();
+      await waitForTelegramInitData(2500);
+      if (telegramInitData() || storedAdminSecret().trim()) {
+        return adminFetch(path, options, false);
+      }
+    }
     throw new Error(detail);
   }
   return res.json();
+}
+
+async function refreshAdminTgSess() {
+  if (!telegramInitData()) return;
+  try {
+    const data = await adminFetch("/api/admin/session", { method: "POST" }, false);
+    const sess = typeof data?.tg_sess === "string" ? data.tg_sess.trim() : "";
+    if (sess && !isAdminTgSessExpired(sess)) {
+      sessionStorage.setItem("adminTgSess", sess);
+    }
+  } catch {
+    /* best effort */
+  }
 }
 
 function StatCard({ icon: Icon, label, value, tone = "blue" }) {
@@ -341,18 +373,22 @@ export default function AdminPanel() {
     (async () => {
       captureTgSessFromUrl();
       setHasTgSess(Boolean(storedTgSess()));
-      window.Telegram?.WebApp?.ready?.();
-      window.Telegram?.WebApp?.expand?.();
+      primeTelegramWebAppForInitData();
 
       if (window.Telegram?.WebApp) {
-        setTgWaiting(true);
-        await Promise.all([
-          waitForTelegramInitData(8000).finally(() => {
+        const hasFreshSess = Boolean(storedTgSess());
+        if (!hasFreshSess && !telegramInitData()) {
+          setTgWaiting(true);
+          await waitForTelegramInitData(8000).finally(() => {
             setTgWaiting(false);
-            setHasInitData(Boolean(telegramInitData()));
-          }),
-          load(),
-        ]);
+          });
+        } else {
+          await waitForTelegramInitData(700);
+        }
+        setHasInitData(Boolean(telegramInitData()));
+        await refreshAdminTgSess();
+        setHasTgSess(Boolean(storedTgSess()));
+        await load();
       } else {
         setHasInitData(false);
         await load();

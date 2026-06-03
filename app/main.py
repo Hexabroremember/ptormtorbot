@@ -33,6 +33,7 @@ from app.activity_store import (
 from app.admin_auth import (
     AdminIdentity,
     effective_admin_secret,
+    mint_admin_tg_sess,
     mint_user_tg_sess,
     require_admin,
     resolve_telegram_webapp_user,
@@ -70,7 +71,7 @@ from app.pdf_download_cache import get_pdf_record, register_pdf_bytes
 from app.public_url import effective_public_base_url
 from app.request_logging import StructuredLoggingMiddleware
 from app.rate_limits import check_rate_limit, delete_override, list_overrides, upsert_override
-from app.storage_connection import connect_storage
+from app.storage_connection import connect_storage, qp
 from app.telegram_notify import (
     get_telegram_chat_profile,
     send_telegram_document,
@@ -880,6 +881,13 @@ def admin_debug(
     }
 
 
+@app.post("/api/admin/session")
+def admin_session(identity: AdminIdentity = Depends(require_admin)) -> dict[str, str]:
+    if identity.telegram_user is None:
+        return {"tg_sess": ""}
+    return {"tg_sess": mint_admin_tg_sess(identity.telegram_user.id)}
+
+
 @app.get("/api/admin/summary")
 def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
     from app.payment_codes_store import codes_summary
@@ -893,6 +901,44 @@ def admin_summary(_: AdminIdentity = Depends(require_admin)) -> dict:
     }
 
 
+def _event_stats_for_user_ids(user_ids: list[int]) -> dict[int, dict[str, Any]]:
+    if not user_ids:
+        return {}
+    placeholders = ",".join("?" for _ in user_ids)
+    try:
+        with connect_storage() as conn:
+            rows = conn.execute(
+                qp(
+                    f"""
+                    SELECT
+                      telegram_user_id,
+                      COUNT(*) AS event_count,
+                      SUM(CASE WHEN event_type = 'payment_code_redeemed' THEN 1 ELSE 0 END) AS redeem_count,
+                      SUM(CASE WHEN event_type = 'pdf_generated' THEN 1 ELSE 0 END) AS pdf_generated_count,
+                      SUM(CASE WHEN event_type = 'pdf_downloaded' THEN 1 ELSE 0 END) AS pdf_download_count,
+                      SUM(CASE WHEN event_type LIKE 'bot_%' THEN 1 ELSE 0 END) AS bot_events_count
+                    FROM events
+                    WHERE telegram_user_id IN ({placeholders})
+                    GROUP BY telegram_user_id
+                    """
+                ),
+                user_ids,
+            ).fetchall()
+    except Exception:
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        uid = int(row["telegram_user_id"])
+        out[uid] = {
+            "event_count": int(row["event_count"] or 0),
+            "redeem_count": int(row["redeem_count"] or 0),
+            "pdf_generated_count": int(row["pdf_generated_count"] or 0),
+            "pdf_download_count": int(row["pdf_download_count"] or 0),
+            "bot_events_count": int(row["bot_events_count"] or 0),
+        }
+    return out
+
+
 @app.get("/api/admin/users")
 def admin_users(
     _: AdminIdentity = Depends(require_admin),
@@ -900,11 +946,8 @@ def admin_users(
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     data = list_telegram_users(limit=limit, offset=offset, include_disabled=True)
-    try:
-        activity = list_user_directory(limit=500, offset=0)
-        by_uid = {int(row["telegram_user_id"]): row for row in activity.get("items", [])}
-    except Exception:
-        by_uid = {}
+    ids = [int(item["telegram_user_id"]) for item in data.get("items", []) if item.get("telegram_user_id")]
+    by_uid = _event_stats_for_user_ids(ids)
     for item in data.get("items", []):
         agg = by_uid.get(int(item["telegram_user_id"]))
         if not agg:
@@ -920,7 +963,6 @@ def admin_users(
             "pdf_generated_count",
             "pdf_download_count",
             "bot_events_count",
-            "from_code_only",
         ):
             item[key] = agg.get(key, item.get(key))
     return data
