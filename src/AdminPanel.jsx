@@ -69,7 +69,7 @@ function isAdminTgSessExpired(sess) {
     const v = String(sess || "").trim();
     if (!v) return false;
     const pad = "=".repeat((4 - (v.length % 4)) % 4);
-    const decoded = window.atob(v + pad);
+    const decoded = window.atob(v.replace(/-/g, "+").replace(/_/g, "/") + pad);
     const [, expRaw] = decoded.split(":");
     const exp = Number(expRaw);
     if (!Number.isFinite(exp) || exp <= 0) return true;
