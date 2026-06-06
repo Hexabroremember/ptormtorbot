@@ -1408,6 +1408,78 @@ const App = () => {
     }
   };
 
+  const renderFaqSection = () => {
+    if (!Array.isArray(t.faqItems) || !t.faqItems.length) return null;
+
+    return (
+      <section
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/90 shadow-sm"
+        dir={language === 'ar' || language === 'he' ? 'rtl' : 'ltr'}
+        lang={language === 'ar' ? 'ar' : 'he'}
+      >
+        <div className="sticky top-0 z-10 border-b border-slate-200/90 bg-slate-50/95 px-4 py-3 backdrop-blur-sm supports-[backdrop-filter]:bg-slate-50/85">
+          <h3 className="flex items-center gap-2.5 text-lg font-bold leading-snug tracking-tight text-slate-900">
+            <CircleHelp className="size-5 shrink-0 text-blue-600" aria-hidden />
+            {t.faqTitle}
+          </h3>
+        </div>
+        <div className="relative">
+          <div className="max-h-[min(52vh,26rem)] overflow-y-auto overscroll-contain scroll-smooth px-3 py-1 pb-10 pt-0 md:max-h-[22rem]">
+            <div className="divide-y divide-slate-200/90">
+              {t.faqItems.map((item, idx) => {
+                const paras =
+                  Array.isArray(item.paragraphs) && item.paragraphs.length
+                    ? item.paragraphs
+                    : item.a
+                      ? [item.a]
+                      : [];
+                return (
+                  <details
+                    key={idx}
+                    className="group border-0 bg-transparent open:bg-blue-50/30"
+                  >
+                    <summary className="flex w-full cursor-pointer list-none items-center justify-between gap-3 py-4 ps-1 pe-1 text-start transition-colors hover:bg-slate-100/80 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-slate-800">
+                        {item.q}
+                      </span>
+                      <ChevronDown
+                        className="size-4 shrink-0 text-blue-400 transition-transform duration-200 group-open:rotate-180"
+                        aria-hidden
+                      />
+                    </summary>
+                    <div className="border-t border-slate-100 bg-white/60 px-1 pb-5 pt-4">
+                      <div className="max-w-prose space-y-2.5 text-[14.5px] leading-7 text-slate-600">
+                        {paras.map((p, pi) => (
+                          <p key={pi}>
+                            {p}
+                          </p>
+                        ))}
+                        {Array.isArray(item.bullets) && item.bullets.length ? (
+                          <ul className="list-none space-y-2 pt-1" role="list">
+                            {item.bullets.map((b, bi) => (
+                              <li key={bi} className="flex items-center gap-2.5">
+                                <span className="size-1.5 shrink-0 rounded-full bg-blue-400" aria-hidden />
+                                <span>{b}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          </div>
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-14 bg-gradient-to-t from-slate-50 to-transparent"
+            aria-hidden
+          />
+        </div>
+      </section>
+    );
+  };
+
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
@@ -1495,73 +1567,6 @@ const App = () => {
                 <p className="text-sm text-slate-500">{t.purchaseHistoryEmpty}</p>
               ) : null}
             </div>
-            {Array.isArray(t.faqItems) && t.faqItems.length ? (
-              <section
-                className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/90 shadow-sm"
-                dir={language === 'ar' || language === 'he' ? 'rtl' : 'ltr'}
-                lang={language === 'ar' ? 'ar' : 'he'}
-              >
-                <div className="sticky top-0 z-10 border-b border-slate-200/90 bg-slate-50/95 px-4 py-3 backdrop-blur-sm supports-[backdrop-filter]:bg-slate-50/85">
-                  <h3 className="flex items-center gap-2.5 text-lg font-bold leading-snug tracking-tight text-slate-900">
-                    <CircleHelp className="size-5 shrink-0 text-blue-600" aria-hidden />
-                    {t.faqTitle}
-                  </h3>
-                </div>
-                <div className="relative">
-                  <div className="max-h-[min(52vh,26rem)] overflow-y-auto overscroll-contain scroll-smooth px-3 py-1 pb-10 pt-0 md:max-h-[22rem]">
-                    <div className="divide-y divide-slate-200/90">
-                      {t.faqItems.map((item, idx) => {
-                        const paras =
-                          Array.isArray(item.paragraphs) && item.paragraphs.length
-                            ? item.paragraphs
-                            : item.a
-                              ? [item.a]
-                              : [];
-                        return (
-                          <details
-                            key={idx}
-                            className="group border-0 bg-transparent open:bg-blue-50/30"
-                          >
-                            <summary className="flex w-full cursor-pointer list-none items-center justify-between gap-3 py-4 ps-1 pe-1 text-start transition-colors hover:bg-slate-100/80 [&::-webkit-details-marker]:hidden">
-                              <span className="min-w-0 flex-1 text-[15px] font-semibold leading-snug text-slate-800">
-                                {item.q}
-                              </span>
-                              <ChevronDown
-                                className="size-4 shrink-0 text-blue-400 transition-transform duration-200 group-open:rotate-180"
-                                aria-hidden
-                              />
-                            </summary>
-                            <div className="border-t border-slate-100 bg-white/60 px-1 pb-5 pt-4">
-                              <div className="max-w-prose space-y-2.5 text-[14.5px] leading-7 text-slate-600">
-                                {paras.map((p, pi) => (
-                                  <p key={pi}>
-                                    {p}
-                                  </p>
-                                ))}
-                                {Array.isArray(item.bullets) && item.bullets.length ? (
-                                  <ul className="list-none space-y-2 pt-1" role="list">
-                                    {item.bullets.map((b, bi) => (
-                                      <li key={bi} className="flex items-center gap-2.5">
-                                        <span className="size-1.5 shrink-0 rounded-full bg-blue-400" aria-hidden />
-                                        <span>{b}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : null}
-                              </div>
-                            </div>
-                          </details>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div
-                    className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-14 bg-gradient-to-t from-slate-50 to-transparent"
-                    aria-hidden
-                  />
-                </div>
-              </section>
-            ) : null}
             {step1Error ? (
               <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-sm">
                 {step1Error}
@@ -2119,6 +2124,12 @@ const App = () => {
               </button>
             )}
           </div>
+
+          {currentStep === 1 ? (
+            <div className="border-t border-slate-100 bg-white p-6 md:p-8">
+              {renderFaqSection()}
+            </div>
+          ) : null}
         </div>
       </main>
     </div>
